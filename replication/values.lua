@@ -25,16 +25,16 @@ local position = {
 
 local data = {
     {
-        "id" = "rep_ae2_bridge:earth",
-        "value" = 0.0,
-        "color" = "green",
-        "gauge" = nil,
+        id = "rep_ae2_bridge:earth",
+        value = 0.0,
+        color = "green",
+        gauge = nil,
     },
     {
-        "id" = "rep_ae2_bridge:metallic",
-        "value" = 0.0,
-        "color" = "gray ",
-        "gauge" = nil,
+        id = "rep_ae2_bridge:metallic",
+        value = 0.0,
+        color = "gray ",
+        gauge = nil,
     },
 }  
 

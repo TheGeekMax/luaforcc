@@ -31,9 +31,45 @@ local data = {
         gauge = nil,
     },
     {
+        id = "rep_ae2_bridge:nether",
+        value = 0.0,
+        color = "red",
+        gauge = nil,
+    },
+    {
+        id = "rep_ae2_bridge:organic",
+        value = 0.0,
+        color = "orange",
+        gauge = nil,
+    },
+    {
+        id = "rep_ae2_bridge:ender",
+        value = 0.0,
+        color = "blue",
+        gauge = nil,
+    },
+    {
         id = "rep_ae2_bridge:metallic",
         value = 0.0,
-        color = "gray ",
+        color = "gray",
+        gauge = nil,
+    },
+    {
+        id = "rep_ae2_bridge:precious",
+        value = 0.0,
+        color = "yellow",
+        gauge = nil,
+    },
+    {
+        id = "rep_ae2_bridge:living",
+        value = 0.0,
+        color = "pink",
+        gauge = nil,
+    },
+    {
+        id = "rep_ae2_bridge:quantum",
+        value = 0.0,
+        color = "purple",
         gauge = nil,
     },
 }  
@@ -41,7 +77,7 @@ local data = {
 -- gauge creations 
 
 for i, v in ipairs(data) do
-    local g = Gauge.new(mon, position.orx, position.ory + (i - 1) * (position.h + position.space), position.w, position.h, 0, 256000)
+    local g = Gauge.new(mon, position.orx + (i - 1) * (position.w + position.space), position.ory , position.w, position.h, 0, 256000)
     g:setBG(colors.black)
     g:setFG(colors[v.color])
     g:setBORDER(colors.white)

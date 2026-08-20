@@ -1,5 +1,5 @@
 
-local aebridge = peripheral.wrap("nom_exact_trouvé")
+local aebridge = peripheral.wrap("me_bridge_1")
 local Gauge = require("gauge")
 local mon = peripheral.find("monitor")
 

@@ -15,7 +15,7 @@ if not aebridge then error("no aebridge found", 0) end
 
 
 local position = {
-    orx = 2,
+    orx = 4,
     ory = 2,
     w = 7,
     h= 22,

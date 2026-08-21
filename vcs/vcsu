@@ -1,0 +1,236 @@
+-- vcsu.lua
+-- Complement de vcs.lua : telecharge un projet entier d'un coup a partir
+-- d'un fichier manifeste stocke dans download/ a la racine du repo.
+--
+-- Cote repo GitHub :
+--   download/projet1        (sans extension)
+--     foldera/file1::file1.lua
+--     folderb/file3::file3.lua
+--
+-- Chaque ligne = "chemin_dans_le_repo::nom_local_a_creer"
+-- Les lignes vides et celles commencant par # sont ignorees.
+--
+-- Installation :
+--   wget https://raw.githubusercontent.com/<toi>/<repo>/main/vcsu.lua vcsu
+--   (necessite vcs.lua deja configure : vcs config <owner/repo> [branch])
+--
+-- Usage :
+--   vcsu get <projet>    -- lit download/<projet>, telecharge/maj chaque fichier liste
+--   vcsu list <projet>   -- affiche le contenu du manifeste sans rien telecharger
+
+local CONFIG_FILE = ".vcsconfig"
+
+-- ==========================================================
+-- Config (meme fichier que vcs.lua)
+-- ==========================================================
+
+local function loadConfig()
+    if not fs.exists(CONFIG_FILE) then
+        return nil
+    end
+    local f = fs.open(CONFIG_FILE, "r")
+    local content = f.readAll()
+    f.close()
+    local ok, data = pcall(textutils.unserialize, content)
+    if not ok or type(data) ~= "table" then
+        return nil
+    end
+    data.files = data.files or {}
+    return data
+end
+
+local function saveConfig(cfg)
+    local f = fs.open(CONFIG_FILE, "w")
+    f.write(textutils.serialize(cfg))
+    f.close()
+end
+
+local function requireConfig()
+    local cfg = loadConfig()
+    if not cfg or not cfg.repo then
+        print("Aucune config trouvee.")
+        print("Lance d'abord : vcs config <owner/repo> [branch]")
+        return nil
+    end
+    return cfg
+end
+
+-- meme format de tracking que vcs.lua : { remote = "...", dest = "..." }
+local function trackFile(cfg, remote, dest)
+    dest = dest or remote
+    for _, entry in ipairs(cfg.files) do
+        if entry.remote == remote then
+            entry.dest = dest
+            return
+        end
+    end
+    table.insert(cfg.files, { remote = remote, dest = dest })
+end
+
+local function buildRawURL(cfg, path)
+    return "https://raw.githubusercontent.com/" .. cfg.repo .. "/" .. cfg.branch .. "/" .. path
+end
+
+local function fetchAndSave(cfg, remotePath, destPath)
+    destPath = destPath or remotePath
+    local url = buildRawURL(cfg, remotePath)
+
+    local response, err = http.get(url)
+    if not response then
+        return false, "Echec du telechargement : " .. tostring(err)
+    end
+
+    local content = response.readAll()
+    response.close()
+
+    if not content or content == "" then
+        return false, "Reponse vide, abandon."
+    end
+
+    local dir = fs.getDir(destPath)
+    if dir ~= "" and not fs.exists(dir) then
+        fs.makeDir(dir)
+    end
+
+    if fs.exists(destPath) then
+        fs.delete(destPath)
+    end
+
+    local f = fs.open(destPath, "w")
+    f.write(content)
+    f.close()
+
+    return true, destPath .. " (" .. #content .. " octets)"
+end
+
+-- ==========================================================
+-- Manifeste
+-- ==========================================================
+
+-- Recupere le contenu brut du manifeste download/<name> depuis le repo.
+-- Ne l'ecrit pas sur le disque, juste retourne le texte.
+local function fetchManifest(cfg, name)
+    local url = buildRawURL(cfg, "download/" .. name)
+    local response, err = http.get(url)
+    if not response then
+        return nil, "Impossible de recuperer le manifeste : " .. tostring(err)
+    end
+    local content = response.readAll()
+    response.close()
+    if not content or content == "" then
+        return nil, "Manifeste vide ou introuvable."
+    end
+    return content
+end
+
+-- Parse le texte du manifeste -> liste de { remote = ..., dest = ... }
+local function parseManifest(text)
+    local entries = {}
+    for line in text:gmatch("[^\r\n]+") do
+        local trimmed = line:match("^%s*(.-)%s*$")
+        if trimmed ~= "" and trimmed:sub(1, 1) ~= "#" then
+            local remote, dest = trimmed:match("^(.-)%s*::%s*(.-)$")
+            if remote and dest and remote ~= "" and dest ~= "" then
+                table.insert(entries, { remote = remote, dest = dest })
+            else
+                print("Ligne ignoree (format invalide) : " .. trimmed)
+            end
+        end
+    end
+    return entries
+end
+
+-- ==========================================================
+-- Commands
+-- ==========================================================
+
+local function cmdGet(args)
+    local name = args[1]
+    if not name then
+        print("Usage: vcsu get <projet>")
+        return
+    end
+
+    local cfg = requireConfig()
+    if not cfg then return end
+
+    print("Manifeste : download/" .. name)
+    local text, err = fetchManifest(cfg, name)
+    if not text then
+        print(err)
+        return
+    end
+
+    local entries = parseManifest(text)
+    if #entries == 0 then
+        print("Aucune entree valide dans ce manifeste.")
+        return
+    end
+
+    local okCount, failCount = 0, 0
+
+    for _, entry in ipairs(entries) do
+        print("GET " .. entry.remote .. " -> " .. entry.dest)
+        local ok, msg = fetchAndSave(cfg, entry.remote, entry.dest)
+        if ok then
+            print("  OK -> " .. msg)
+            trackFile(cfg, entry.remote, entry.dest)
+            okCount = okCount + 1
+        else
+            print("  " .. msg)
+            failCount = failCount + 1
+        end
+    end
+
+    saveConfig(cfg)
+    print(("Termine : %d ok, %d echec(s)"):format(okCount, failCount))
+    print("(les fichiers sont maintenant suivis par 'vcs update' aussi)")
+end
+
+local function cmdList(args)
+    local name = args[1]
+    if not name then
+        print("Usage: vcsu list <projet>")
+        return
+    end
+
+    local cfg = requireConfig()
+    if not cfg then return end
+
+    local text, err = fetchManifest(cfg, name)
+    if not text then
+        print(err)
+        return
+    end
+
+    local entries = parseManifest(text)
+    if #entries == 0 then
+        print("Aucune entree valide dans ce manifeste.")
+        return
+    end
+
+    print("Contenu de download/" .. name .. " :")
+    for _, entry in ipairs(entries) do
+        print("  " .. entry.remote .. " -> " .. entry.dest)
+    end
+end
+
+local function printHelp()
+    print("vcsu get <projet>    -- telecharge/maj tous les fichiers du manifeste")
+    print("vcsu list <projet>   -- affiche le manifeste sans telecharger")
+end
+
+-- ==========================================================
+-- Entry point
+-- ==========================================================
+
+local args = { ... }
+local sub = args[1]
+
+if sub == "get" then
+    cmdGet({ table.unpack(args, 2) })
+elseif sub == "list" then
+    cmdList({ table.unpack(args, 2) })
+else
+    printHelp()
+end

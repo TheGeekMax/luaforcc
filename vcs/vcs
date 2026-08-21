@@ -1,0 +1,228 @@
+-- vcs.lua
+-- Petit client "VCS-like" pour CC:Tweaked : télécharge des fichiers
+-- depuis un repo GitHub via raw.githubusercontent.com
+--
+-- Installation :
+--   wget https://raw.githubusercontent.com/<toi>/<repo>/main/vcs.lua vcs
+--
+-- Usage :
+--   vcs config <owner/repo> [branch]   -- configure le repo (branch par defaut: main)
+--   vcs info                           -- affiche la config actuelle + fichiers suivis
+--   vcs get <chemin/fichier.lua>       -- telecharge (et ecrase) le fichier local
+--   vcs update                         -- re-telecharge tous les fichiers deja recuperes
+
+local CONFIG_FILE = ".vcsconfig"
+
+-- ==========================================================
+-- Config
+-- ==========================================================
+
+local function loadConfig()
+    if not fs.exists(CONFIG_FILE) then
+        return nil
+    end
+    local f = fs.open(CONFIG_FILE, "r")
+    local content = f.readAll()
+    f.close()
+    local ok, data = pcall(textutils.unserialize, content)
+    if not ok or type(data) ~= "table" then
+        return nil
+    end
+    data.files = data.files or {}
+    return data
+end
+
+local function saveConfig(cfg)
+    local f = fs.open(CONFIG_FILE, "w")
+    f.write(textutils.serialize(cfg))
+    f.close()
+end
+
+local function requireConfig()
+    local cfg = loadConfig()
+    if not cfg or not cfg.repo then
+        print("Aucune config trouvee.")
+        print("Lance d'abord : vcs config <owner/repo> [branch]")
+        return nil
+    end
+    return cfg
+end
+
+local function trackFile(cfg, path)
+    for _, p in ipairs(cfg.files) do
+        if p == path then
+            return -- deja suivi
+        end
+    end
+    table.insert(cfg.files, path)
+end
+
+-- ==========================================================
+-- URL building
+-- ==========================================================
+
+local function buildRawURL(cfg, path)
+    -- point unique de conversion repo -> URL raw
+    -- (facile a changer pour jsdelivr plus tard si besoin)
+    return "https://raw.githubusercontent.com/" .. cfg.repo .. "/" .. cfg.branch .. "/" .. path
+end
+
+-- ==========================================================
+-- Coeur du telechargement (partage entre "get" et "update")
+-- ==========================================================
+
+-- Telecharge path depuis le repo et l'ecrit en local en preservant
+-- l'arborescence. Ne touche au fichier local qu'en cas de succes.
+local function fetchAndSave(cfg, path)
+    local url = buildRawURL(cfg, path)
+
+    local response, err = http.get(url)
+    if not response then
+        return false, "Echec du telechargement : " .. tostring(err)
+    end
+
+    local content = response.readAll()
+    response.close()
+
+    if not content or content == "" then
+        return false, "Reponse vide, abandon."
+    end
+
+    local dir = fs.getDir(path)
+    if dir ~= "" and not fs.exists(dir) then
+        fs.makeDir(dir)
+    end
+
+    if fs.exists(path) then
+        fs.delete(path)
+    end
+
+    local f = fs.open(path, "w")
+    f.write(content)
+    f.close()
+
+    return true, path .. " (" .. #content .. " octets)"
+end
+
+-- ==========================================================
+-- Commands
+-- ==========================================================
+
+local function cmdConfig(args)
+    local repo = args[1]
+    local branch = args[2] or "main"
+
+    if not repo then
+        print("Usage: vcs config <owner/repo> [branch]")
+        return
+    end
+
+    if not repo:match("^[%w%-%_%.]+/[%w%-%_%.]+$") then
+        print("Format invalide. Attendu : owner/repo (ex: Toastcie/mon-repo)")
+        return
+    end
+
+    local cfg = loadConfig() or { files = {} }
+    cfg.repo = repo
+    cfg.branch = branch
+    saveConfig(cfg)
+
+    print("Config enregistree :")
+    print("  repo   = " .. repo)
+    print("  branch = " .. branch)
+end
+
+local function cmdInfo()
+    local cfg = loadConfig()
+    if not cfg or not cfg.repo then
+        print("Aucune config trouvee.")
+        print("Lance : vcs config <owner/repo> [branch]")
+        return
+    end
+    print("repo   = " .. cfg.repo)
+    print("branch = " .. cfg.branch)
+    if #cfg.files == 0 then
+        print("fichiers suivis : aucun")
+    else
+        print("fichiers suivis :")
+        for _, p in ipairs(cfg.files) do
+            print("  - " .. p)
+        end
+    end
+end
+
+local function cmdGet(args)
+    local path = args[1]
+    if not path then
+        print("Usage: vcs get <chemin/fichier.lua>")
+        return
+    end
+
+    local cfg = requireConfig()
+    if not cfg then return end
+
+    print("GET " .. buildRawURL(cfg, path))
+    local ok, msg = fetchAndSave(cfg, path)
+
+    if ok then
+        print("OK -> " .. msg)
+        trackFile(cfg, path)
+        saveConfig(cfg)
+    else
+        print(msg)
+        print("(le fichier local, s'il existe, n'a pas ete touche)")
+    end
+end
+
+local function cmdUpdate()
+    local cfg = requireConfig()
+    if not cfg then return end
+
+    if #cfg.files == 0 then
+        print("Aucun fichier suivi pour le moment.")
+        print("Utilise d'abord : vcs get <chemin/fichier.lua>")
+        return
+    end
+
+    local okCount, failCount = 0, 0
+
+    for _, path in ipairs(cfg.files) do
+        print("GET " .. path)
+        local ok, msg = fetchAndSave(cfg, path)
+        if ok then
+            print("  OK -> " .. msg)
+            okCount = okCount + 1
+        else
+            print("  " .. msg)
+            failCount = failCount + 1
+        end
+    end
+
+    print(("Termine : %d ok, %d echec(s)"):format(okCount, failCount))
+end
+
+local function printHelp()
+    print("vcs config <owner/repo> [branch]")
+    print("vcs info")
+    print("vcs get <chemin/fichier.lua>")
+    print("vcs update")
+end
+
+-- ==========================================================
+-- Entry point
+-- ==========================================================
+
+local args = { ... }
+local sub = args[1]
+
+if sub == "config" then
+    cmdConfig({ table.unpack(args, 2) })
+elseif sub == "info" then
+    cmdInfo()
+elseif sub == "get" then
+    cmdGet({ table.unpack(args, 2) })
+elseif sub == "update" then
+    cmdUpdate()
+else
+    printHelp()
+end

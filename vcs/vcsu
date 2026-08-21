@@ -1,27 +1,50 @@
 -- vcsu.lua
--- Complement de vcs.lua : telecharge un projet entier d'un coup a partir
+-- Complement de vcs : telecharge un projet entier d'un coup a partir
 -- d'un fichier manifeste stocke dans download/ a la racine du repo.
 --
--- Cote repo GitHub :
---   download/projet1        (sans extension)
---     foldera/file1::file1.lua
---     folderb/file3::file3.lua
+-- Format d'un manifeste (download/projet1, sans extension) :
 --
--- Chaque ligne = "chemin_dans_le_repo::nom_local_a_creer"
--- Les lignes vides et celles commencant par # sont ignorees.
+--   -- ceci est un commentaire (ligne entiere uniquement)
 --
--- Installation :
---   wget https://raw.githubusercontent.com/<toi>/<repo>/main/vcsu.lua vcsu
---   (necessite vcs.lua deja configure : vcs config <owner/repo> [branch])
+--   #include: libs            -- inclut les fichiers du projet "libs"
+--   #startup: main.lua        -- lance ce fichier au boot
+--
+--   foldera/file1::main.lua
+--   folderb/file3::lib/file3.lua
+--
+-- Regles :
+--   - une ligne commencant par "--" est un commentaire
+--   - PAS de commentaire en fin de ligne fonctionnelle
+--   - "remote::local" : local est relatif au DOSSIER COURANT
+--   - #startup: prend un chemin LOCAL (apres download)
+--   - en cas de #startup: multiples (via includes), celui du manifeste
+--     appele en ligne de commande gagne
 --
 -- Usage :
---   vcsu get <projet>    -- lit download/<projet>, telecharge/maj chaque fichier liste
---   vcsu list <projet>   -- affiche le contenu du manifeste sans rien telecharger
+--   vcsu get <projet> [--no-startup]
+--   vcsu list <projet>
 
-local CONFIG_FILE = ".vcsconfig"
+local CONFIG_FILE = "/.vcsconfig"
+local STARTUP_FILE = "/startup.lua"
+
+local STARTUP_BEGIN = "-- >>> vcsu startup >>>"
+local STARTUP_END = "-- <<< vcsu startup <<<"
 
 -- ==========================================================
--- Config (meme fichier que vcs.lua)
+-- Chemins
+-- ==========================================================
+
+-- fs.* travaille toujours depuis la racine et ignore le dossier courant
+-- du shell : il faut donc resoudre les chemins relatifs soi-meme.
+local function resolvePath(path)
+    if path:sub(1, 1) == "/" then
+        return path
+    end
+    return shell.resolve(path)
+end
+
+-- ==========================================================
+-- Config (meme fichier que vcs)
 -- ==========================================================
 
 local function loadConfig()
@@ -55,24 +78,26 @@ local function requireConfig()
     return cfg
 end
 
--- meme format de tracking que vcs.lua : { remote = "...", dest = "..." }
+-- meme format de tracking que vcs : { remote = "...", dest = "..." }
+-- dest toujours absolu
 local function trackFile(cfg, remote, dest)
-    dest = dest or remote
     for _, entry in ipairs(cfg.files) do
-        if entry.remote == remote then
-            entry.dest = dest
+        if entry.remote == remote and entry.dest == dest then
             return
         end
     end
     table.insert(cfg.files, { remote = remote, dest = dest })
 end
 
+-- ==========================================================
+-- Reseau
+-- ==========================================================
+
 local function buildRawURL(cfg, path)
     return "https://raw.githubusercontent.com/" .. cfg.repo .. "/" .. cfg.branch .. "/" .. path
 end
 
 local function fetchAndSave(cfg, remotePath, destPath)
-    destPath = destPath or remotePath
     local url = buildRawURL(cfg, remotePath)
 
     local response, err = http.get(url)
@@ -103,41 +128,206 @@ local function fetchAndSave(cfg, remotePath, destPath)
     return true, destPath .. " (" .. #content .. " octets)"
 end
 
--- ==========================================================
--- Manifeste
--- ==========================================================
-
 -- Recupere le contenu brut du manifeste download/<name> depuis le repo.
--- Ne l'ecrit pas sur le disque, juste retourne le texte.
 local function fetchManifest(cfg, name)
     local url = buildRawURL(cfg, "download/" .. name)
     local response, err = http.get(url)
     if not response then
-        return nil, "Impossible de recuperer le manifeste : " .. tostring(err)
+        return nil, "Manifeste '" .. name .. "' introuvable (" .. tostring(err) .. ")"
     end
     local content = response.readAll()
     response.close()
     if not content or content == "" then
-        return nil, "Manifeste vide ou introuvable."
+        return nil, "Manifeste '" .. name .. "' vide."
     end
     return content
 end
 
--- Parse le texte du manifeste -> liste de { remote = ..., dest = ... }
-local function parseManifest(text)
-    local entries = {}
+-- ==========================================================
+-- Parsing (pur, aucune I/O)
+-- ==========================================================
+
+-- Retourne une liste ordonnee d'items types :
+--   { kind = "file",    remote = "...", dest = "..." }
+--   { kind = "include", project = "..." }
+--   { kind = "startup", target = "..." }
+local function parseManifest(text, name)
+    local items = {}
+    local lineNo = 0
+
     for line in text:gmatch("[^\r\n]+") do
+        lineNo = lineNo + 1
         local trimmed = line:match("^%s*(.-)%s*$")
-        if trimmed ~= "" and trimmed:sub(1, 1) ~= "#" then
+
+        -- ligne vide ou commentaire
+        if trimmed == "" or trimmed:sub(1, 2) == "--" then
+            -- ignore
+
+        -- macro
+        elseif trimmed:sub(1, 1) == "#" then
+            local macro, value = trimmed:match("^#%s*([%w_]+)%s*:%s*(.-)$")
+            if not macro or value == "" then
+                print(("[%s:%d] macro invalide : %s"):format(name, lineNo, trimmed))
+            elseif macro == "include" then
+                table.insert(items, { kind = "include", project = value })
+            elseif macro == "startup" then
+                table.insert(items, { kind = "startup", target = value })
+            else
+                print(("[%s:%d] macro inconnue : #%s"):format(name, lineNo, macro))
+            end
+
+        -- ligne fichier
+        else
             local remote, dest = trimmed:match("^(.-)%s*::%s*(.-)$")
             if remote and dest and remote ~= "" and dest ~= "" then
-                table.insert(entries, { remote = remote, dest = dest })
+                table.insert(items, { kind = "file", remote = remote, dest = dest })
             else
-                print("Ligne ignoree (format invalide) : " .. trimmed)
+                print(("[%s:%d] ligne ignoree (format invalide) : %s"):format(name, lineNo, trimmed))
             end
         end
     end
-    return entries
+
+    return items
+end
+
+-- ==========================================================
+-- Resolution (recursive, avec includes)
+-- ==========================================================
+
+-- Accumule les fichiers de <name> et de ses includes.
+-- acc = { files = {}, seen = {}, startups = {}, order = {} }
+-- Retourne false + message si un manifeste est introuvable.
+local function resolveProject(cfg, name, acc, depth)
+    depth = depth or 0
+
+    if acc.visited[name] then
+        print(("(include ignore, deja traite : %s)"):format(name))
+        return true
+    end
+    acc.visited[name] = true
+
+    local text, err = fetchManifest(cfg, name)
+    if not text then
+        return false, err
+    end
+
+    table.insert(acc.order, { name = name, depth = depth })
+
+    local items = parseManifest(text, name)
+
+    for _, item in ipairs(items) do
+        if item.kind == "include" then
+            local ok, ierr = resolveProject(cfg, item.project, acc, depth + 1)
+            if not ok then
+                return false, ierr
+            end
+
+        elseif item.kind == "startup" then
+            table.insert(acc.startups, { project = name, target = item.target, depth = depth })
+
+        elseif item.kind == "file" then
+            local dest = resolvePath(item.dest)
+            local key = item.remote .. "\0" .. dest
+            if not acc.seen[key] then
+                acc.seen[key] = true
+                table.insert(acc.files, {
+                    remote = item.remote,
+                    dest = dest,
+                    project = name,
+                })
+            end
+        end
+    end
+
+    return true
+end
+
+local function newAcc()
+    return { files = {}, seen = {}, visited = {}, startups = {}, order = {} }
+end
+
+-- ==========================================================
+-- Bloc startup
+-- ==========================================================
+
+-- Retire le bloc vcsu existant du contenu de startup.lua.
+-- Recherche en plain-text (pas de regex) pour eviter les soucis
+-- d'echappement avec les tirets des marqueurs.
+local function stripStartupBlock(content)
+    local s = content:find(STARTUP_BEGIN, 1, true)
+    if not s then
+        return content, false
+    end
+
+    local e = content:find(STARTUP_END, s, true)
+    if not e then
+        -- marqueur de fin manquant : on coupe a partir du debut
+        return content:sub(1, s - 1), true
+    end
+
+    local after = e + #STARTUP_END
+    -- avale le retour a la ligne qui suit le marqueur de fin
+    if content:sub(after, after) == "\n" then
+        after = after + 1
+    end
+
+    return content:sub(1, s - 1) .. content:sub(after), true
+end
+
+local function writeStartupBlock(targetPath)
+    local existing = ""
+    if fs.exists(STARTUP_FILE) then
+        local f = fs.open(STARTUP_FILE, "r")
+        existing = f.readAll()
+        f.close()
+    end
+
+    local cleaned, hadBlock = stripStartupBlock(existing)
+
+    -- normalise la fin de fichier avant d'appondre
+    cleaned = cleaned:gsub("%s+$", "")
+    if cleaned ~= "" then
+        cleaned = cleaned .. "\n"
+    end
+
+    local block = STARTUP_BEGIN .. "\n"
+        .. ('shell.run("%s")\n'):format(targetPath)
+        .. STARTUP_END .. "\n"
+
+    local f = fs.open(STARTUP_FILE, "w")
+    f.write(cleaned .. block)
+    f.close()
+
+    if hadBlock then
+        print("Bloc startup remplace -> " .. targetPath)
+    else
+        print("Bloc startup ajoute -> " .. targetPath)
+    end
+end
+
+-- Choisit le startup a appliquer : celui du manifeste demande en CLI
+-- (depth 0) gagne sur ceux venant des includes.
+local function pickStartup(startups)
+    if #startups == 0 then
+        return nil
+    end
+
+    local chosen = startups[1]
+    for _, s in ipairs(startups) do
+        if s.depth < chosen.depth then
+            chosen = s
+        end
+    end
+
+    if #startups > 1 then
+        print("Attention : plusieurs #startup: declares")
+        for _, s in ipairs(startups) do
+            local mark = (s == chosen) and " <- retenu" or ""
+            print("  " .. s.project .. " : " .. s.target .. mark)
+        end
+    end
+
+    return chosen
 end
 
 -- ==========================================================
@@ -145,34 +335,50 @@ end
 -- ==========================================================
 
 local function cmdGet(args)
-    local name = args[1]
+    local name = nil
+    local noStartup = false
+
+    for _, a in ipairs(args) do
+        if a == "--no-startup" then
+            noStartup = true
+        elseif not name then
+            name = a
+        end
+    end
+
     if not name then
-        print("Usage: vcsu get <projet>")
+        print("Usage: vcsu get <projet> [--no-startup]")
         return
     end
 
     local cfg = requireConfig()
     if not cfg then return end
 
-    print("Manifeste : download/" .. name)
-    local text, err = fetchManifest(cfg, name)
-    if not text then
+    -- 1. resolution complete AVANT tout telechargement :
+    --    un include casse = rien d'ecrit sur le disque
+    print("Resolution de : " .. name)
+    local acc = newAcc()
+    local ok, err = resolveProject(cfg, name, acc)
+    if not ok then
         print(err)
+        print("Rien n'a ete telecharge.")
         return
     end
 
-    local entries = parseManifest(text)
-    if #entries == 0 then
-        print("Aucune entree valide dans ce manifeste.")
+    if #acc.files == 0 then
+        print("Aucun fichier a telecharger.")
         return
     end
 
+    print(("%d fichier(s) a recuperer."):format(#acc.files))
+
+    -- 2. telechargement
     local okCount, failCount = 0, 0
 
-    for _, entry in ipairs(entries) do
-        print("GET " .. entry.remote .. " -> " .. entry.dest)
-        local ok, msg = fetchAndSave(cfg, entry.remote, entry.dest)
-        if ok then
+    for _, entry in ipairs(acc.files) do
+        print("GET " .. entry.remote)
+        local fok, msg = fetchAndSave(cfg, entry.remote, entry.dest)
+        if fok then
             print("  OK -> " .. msg)
             trackFile(cfg, entry.remote, entry.dest)
             okCount = okCount + 1
@@ -183,8 +389,20 @@ local function cmdGet(args)
     end
 
     saveConfig(cfg)
+
+    -- 3. startup
+    local startup = pickStartup(acc.startups)
+    if startup then
+        if noStartup then
+            print("(--no-startup : bloc startup non applique)")
+        elseif failCount > 0 then
+            print("Echecs detectes : bloc startup non applique.")
+        else
+            writeStartupBlock(resolvePath(startup.target))
+        end
+    end
+
     print(("Termine : %d ok, %d echec(s)"):format(okCount, failCount))
-    print("(les fichiers sont maintenant suivis par 'vcs update' aussi)")
 end
 
 local function cmdList(args)
@@ -197,27 +415,36 @@ local function cmdList(args)
     local cfg = requireConfig()
     if not cfg then return end
 
-    local text, err = fetchManifest(cfg, name)
-    if not text then
+    local acc = newAcc()
+    local ok, err = resolveProject(cfg, name, acc)
+    if not ok then
         print(err)
         return
     end
 
-    local entries = parseManifest(text)
-    if #entries == 0 then
-        print("Aucune entree valide dans ce manifeste.")
-        return
+    print("Manifestes resolus :")
+    for _, m in ipairs(acc.order) do
+        print("  " .. string.rep("  ", m.depth) .. m.name)
     end
 
-    print("Contenu de download/" .. name .. " :")
-    for _, entry in ipairs(entries) do
+    print("Fichiers :")
+    for _, entry in ipairs(acc.files) do
         print("  " .. entry.remote .. " -> " .. entry.dest)
     end
+
+    local startup = pickStartup(acc.startups)
+    if startup then
+        print("Startup : " .. resolvePath(startup.target))
+    else
+        print("Startup : aucun")
+    end
+
+    print(("Total : %d fichier(s)"):format(#acc.files))
 end
 
 local function printHelp()
-    print("vcsu get <projet>    -- telecharge/maj tous les fichiers du manifeste")
-    print("vcsu list <projet>   -- affiche le manifeste sans telecharger")
+    print("vcsu get <projet> [--no-startup]")
+    print("vcsu list <projet>")
 end
 
 -- ==========================================================

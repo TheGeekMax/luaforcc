@@ -1,2 +1,4 @@
-graphs/gauge.lua::gauge.lua
+#include: graphs
+#startup: anim_gauges.lua
+
 replication/values.lua::anim_gauges.lua

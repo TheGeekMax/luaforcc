@@ -11,7 +11,7 @@ Les scripts s'installent directement depuis ce depot sur n'importe quel ordinate
 Une seule ligne sur une machine neuve :
 
 ```
-wget https://raw.githubusercontent.com/TheGeekMax/luaforcc/refs/heads/main/vcs/install install
+wget https://raw.githubusercontent.com/TheGeekMax/luaforcc/refs/heads/main/vcs/install.lua install
 install
 vcs config TheGeekMax/luaforcc
 ```

@@ -1,0 +1,4 @@
+
+-- basic graph infos
+graphs/gauge.lua::gauge.lua
+graphs/graph.lua::graph.lua

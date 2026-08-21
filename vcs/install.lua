@@ -2,16 +2,17 @@
 -- Installe vcs et vcsu dans /scripts, cree un dossier /home pour tes
 -- propres scripts, et ajoute /scripts au PATH de facon persistante.
 --
--- Usage :
---   wget https://raw.githubusercontent.com/<toi>/<repo>/main/install.lua install
---   install <owner/repo> [branch]
+-- Usage : ./install
 
 local SCRIPTS_DIR = "/scripts"
 local HOME_DIR = "/home"
 local STARTUP_FILE = "startup.lua"
 local PATH_LINE = 'shell.setPath(shell.path() .. ":' .. SCRIPTS_DIR .. '")'
 
-local FILES = { "vcs.lua", "vcsu.lua" }
+local BASE_URL = "https://raw.githubusercontent.com/TheGeekMax/luaforcc/refs/heads/main/vcs/"
+
+-- nom du fichier distant -> nom de la commande locale
+local FILES = { "vcs", "vcsu" }
 
 local function download(url, dest)
     local response, err = http.get(url)
@@ -70,28 +71,14 @@ end
 -- Entry point
 -- ==========================================================
 
-local args = { ... }
-local repo = args[1]
-local branch = args[2] or "main"
-
-if not repo then
-    print("Usage: install <owner/repo> [branch]")
-    return
-end
-
-if not repo:match("^[%w%-%_%.]+/[%w%-%_%.]+$") then
-    print("Format invalide. Attendu : owner/repo (ex: Toastcie/mon-repo)")
-    return
-end
-
 ensureDir(SCRIPTS_DIR)
 ensureDir(HOME_DIR)
 
 local okCount, failCount = 0, 0
 
-for _, filename in ipairs(FILES) do
-    local url = "https://raw.githubusercontent.com/" .. repo .. "/" .. branch .. "/" .. filename
-    local dest = fs.combine(SCRIPTS_DIR, (filename:gsub("%.lua$", "")))
+for _, name in ipairs(FILES) do
+    local url = BASE_URL .. name
+    local dest = fs.combine(SCRIPTS_DIR, name)
 
     print("GET " .. url)
     local ok, err = download(url, dest)
@@ -112,6 +99,6 @@ shell.setPath(shell.path() .. ":" .. SCRIPTS_DIR)
 
 print(("Termine : %d ok, %d echec(s)"):format(okCount, failCount))
 if okCount > 0 then
-    print("Prochaine etape : vcs config " .. repo .. " " .. branch)
+    print("Prochaine etape : vcs config <owner/repo> [branch]")
     print("Tes scripts perso : " .. HOME_DIR)
 end

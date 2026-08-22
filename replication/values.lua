@@ -104,20 +104,20 @@ while true do
         local value = aebridge.getItem({name = v.id}).count
         data[i].gauge:setValue(value)
         data[i].gauge:show()
-        local newLevel = "l"
-        if value > midAmmount then
+        local newLevel = "h"
+        if value < lowAmmount then
+            newLevel = "l"
+        elseif value < midAmmount then
             newLevel = "m"
-        elseif value > lowAmmount then
-            newLevel = "h"
         end
 
         if newLevel ~= data[i].currentlevel then
             data[i].currentlevel = newLevel
-            if newLevel == "l" then
+            if newLevel == "h" then
                 data[i].gauge:setBORDER(colors.white)
             elseif newLevel == "m" then
                 data[i].gauge:setBORDER(colors.yellow)
-            elseif newLevel == "h" then
+            elseif newLevel == "l" then
                 data[i].gauge:setBORDER(colors.red)
             end
             data[i].gauge:invalidate()

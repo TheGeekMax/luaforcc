@@ -2,6 +2,9 @@
 local aebridge = peripheral.wrap("me_bridge_1")
 local Gauge = require("gauge")
 local mon = peripheral.find("monitor")
+local maxAmmount = 256000
+local midAmmount = maxAmmount / 2
+local lowAmmount = maxAmmount / 4
 
 -- defensive check
 if not mon then error("no monitor found", 0) end
@@ -15,10 +18,10 @@ if not aebridge then error("no aebridge found", 0) end
 
 
 local position = {
-    orx = 4,
+    orx = 9,
     ory = 2,
     w = 7,
-    h= 22,
+    h= 40,
     space = 1,
 }
 
@@ -29,48 +32,56 @@ local data = {
         value = 0.0,
         color = "green",
         gauge = nil,
+        currentlevel="l",
     },
     {
         id = "rep_ae2_bridge:nether",
         value = 0.0,
         color = "red",
         gauge = nil,
+        currentlevel="l",
     },
     {
         id = "rep_ae2_bridge:organic",
         value = 0.0,
         color = "orange",
         gauge = nil,
+        currentlevel="l",
     },
     {
         id = "rep_ae2_bridge:ender",
         value = 0.0,
         color = "blue",
         gauge = nil,
+        currentlevel="l",
     },
     {
         id = "rep_ae2_bridge:metallic",
         value = 0.0,
         color = "gray",
         gauge = nil,
+        currentlevel="l",
     },
     {
         id = "rep_ae2_bridge:precious",
         value = 0.0,
         color = "yellow",
         gauge = nil,
+        currentlevel="l",
     },
     {
         id = "rep_ae2_bridge:living",
         value = 0.0,
         color = "pink",
         gauge = nil,
+        currentlevel="l",
     },
     {
         id = "rep_ae2_bridge:quantum",
         value = 0.0,
         color = "purple",
         gauge = nil,
+        currentlevel="l",
     },
 }  
 
@@ -93,6 +104,24 @@ while true do
         local value = aebridge.getItem({name = v.id}).count
         data[i].gauge:setValue(value)
         data[i].gauge:show()
+        local newLevel = "l"
+        if value > midAmmount then
+            newLevel = "m"
+        elseif value > lowAmmount then
+            newLevel = "h"
+        end
+
+        if newLevel ~= data[i].currentlevel then
+            data[i].currentlevel = newLevel
+            if newLevel == "l" then
+                data[i].gauge:setFG(colors.white)
+            elseif newLevel == "m" then
+                data[i].gauge:setFG(colors.yellow)
+            elseif newLevel == "h" then
+                data[i].gauge:setFG(colors.red)
+            end
+            data[i].gauge:invalidate()
+        end
     end
 
 end

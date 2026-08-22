@@ -11,8 +11,13 @@
 --   vcs get <chemin/fichier.lua> [dest] -- telecharge dans le DOSSIER COURANT
 --   vcs update                         -- re-telecharge tous les fichiers deja recuperes
 --                                          (y compris ceux ajoutes par vcsu)
+--   vcs self-update                    -- met a jour vcs et vcsu eux-memes
 
 local CONFIG_FILE = "/.vcsconfig"
+
+-- Depot de l'outillage, independant du depot configure par "vcs config".
+local TOOLS_URL = "https://raw.githubusercontent.com/TheGeekMax/luaforcc/refs/heads/main/vcs/"
+local TOOLS = { "vcs", "vcsu" }
 
 -- ==========================================================
 -- Chemins
@@ -43,6 +48,20 @@ local function loadConfig()
         return nil
     end
     data.files = data.files or {}
+
+    -- Migration : les anciennes versions stockaient une liste de chaines,
+    -- les recentes des tables { remote, dest }.
+    local migrated = 0
+    for i, entry in ipairs(data.files) do
+        if type(entry) == "string" then
+            data.files[i] = { remote = entry, dest = "/" .. entry }
+            migrated = migrated + 1
+        end
+    end
+    if migrated > 0 then
+        print(("(%d entree(s) de config migrees depuis l'ancien format)"):format(migrated))
+    end
+
     return data
 end
 
@@ -224,11 +243,66 @@ local function cmdUpdate()
     print(("Termine : %d ok, %d echec(s)"):format(okCount, failCount))
 end
 
+-- Met a jour l'outillage lui-meme. Le dossier vise est celui d'ou "vcs"
+-- tourne actuellement, pour ne pas dependre d'un chemin en dur.
+local function cmdSelfUpdate()
+    local running = shell.getRunningProgram()
+    local dir = fs.getDir(running)
+    if dir == "" then dir = "/" end
+
+    print("Mise a jour de l'outillage dans /" .. dir)
+
+    local fetched = {}
+
+    -- on telecharge tout en memoire d'abord : si une seule requete echoue,
+    -- rien n'est ecrit et l'installation reste coherente
+    for _, name in ipairs(TOOLS) do
+        local url = TOOLS_URL .. name
+        print("GET " .. name)
+
+        local response, err = http.get(url)
+        if not response then
+            print("  Echec : " .. tostring(err))
+            print("Rien n'a ete modifie.")
+            return
+        end
+
+        local content = response.readAll()
+        response.close()
+
+        if not content or content == "" then
+            print("  Reponse vide.")
+            print("Rien n'a ete modifie.")
+            return
+        end
+
+        fetched[name] = content
+    end
+
+    for _, name in ipairs(TOOLS) do
+        local dest = fs.combine(dir, name)
+        if fs.exists(dest) then
+            fs.delete(dest)
+        end
+        local f = fs.open(dest, "w")
+        f.write(fetched[name])
+        f.close()
+        print("  OK -> /" .. dest .. " (" .. #fetched[name] .. " octets)")
+    end
+
+    print("Outillage a jour.")
+    if fs.combine(dir, "vcs") == running then
+        print("(vcs vient d'etre remplace : la version en cours")
+        print(" d'execution reste l'ancienne jusqu'au prochain appel)")
+    end
+end
+
 local function printHelp()
     print("vcs config <owner/repo> [branch]")
     print("vcs info")
     print("vcs get <chemin/fichier.lua> [destination]")
     print("vcs update")
+    print("vcs self-update")
 end
 
 -- ==========================================================
@@ -246,6 +320,8 @@ elseif sub == "get" then
     cmdGet({ table.unpack(args, 2) })
 elseif sub == "update" then
     cmdUpdate()
+elseif sub == "self-update" then
+    cmdSelfUpdate()
 else
     printHelp()
 end

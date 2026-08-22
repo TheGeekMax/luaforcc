@@ -114,11 +114,11 @@ while true do
         if newLevel ~= data[i].currentlevel then
             data[i].currentlevel = newLevel
             if newLevel == "l" then
-                data[i].gauge:setFG(colors.white)
+                data[i].gauge:setBORDER(colors.white)
             elseif newLevel == "m" then
-                data[i].gauge:setFG(colors.yellow)
+                data[i].gauge:setBORDER(colors.yellow)
             elseif newLevel == "h" then
-                data[i].gauge:setFG(colors.red)
+                data[i].gauge:setBORDER(colors.red)
             end
             data[i].gauge:invalidate()
         end

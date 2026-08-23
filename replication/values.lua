@@ -13,7 +13,7 @@ mon.setBackgroundColour(colors.black)
 mon.clear()
 
 if not aebridge then
-    error("no aebridge found", 0)
+    print("no aebridge found", 0)
     sleep(5)
     os.reboot()
 end

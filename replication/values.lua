@@ -1,5 +1,5 @@
 
-local aebridge = peripheral.wrap("me_bridge_1")
+local aebridge = peripheral.wrap("me_bridge_2")
 local Gauge = require("gauge")
 local mon = peripheral.find("monitor")
 local maxAmmount = 256000

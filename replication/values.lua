@@ -12,11 +12,15 @@ mon.setTextScale(0.5)
 mon.setBackgroundColour(colors.black)
 mon.clear()
 
-if not aebridge then
-    print("no aebridge found", 0)
-    sleep(5)
-    os.reboot()
+function rebootifnull()
+    if not aebridge then
+        print("no aebridge found", 0)
+        sleep(5)
+        os.reboot()
+    end
 end
+
+rebootifnull()
 
 -- layout and data definitions
 
@@ -36,56 +40,56 @@ local data = {
         value = 0.0,
         color = "green",
         gauge = nil,
-        currentlevel="l",
+        currentlevel="h",
     },
     {
         id = "rep_ae2_bridge:nether",
         value = 0.0,
         color = "red",
         gauge = nil,
-        currentlevel="l",
+        currentlevel="h",
     },
     {
         id = "rep_ae2_bridge:organic",
         value = 0.0,
         color = "orange",
         gauge = nil,
-        currentlevel="l",
+        currentlevel="h",
     },
     {
         id = "rep_ae2_bridge:ender",
         value = 0.0,
         color = "blue",
         gauge = nil,
-        currentlevel="l",
+        currentlevel="h",
     },
     {
         id = "rep_ae2_bridge:metallic",
         value = 0.0,
         color = "gray",
         gauge = nil,
-        currentlevel="l",
+        currentlevel="h",
     },
     {
         id = "rep_ae2_bridge:precious",
         value = 0.0,
         color = "yellow",
         gauge = nil,
-        currentlevel="l",
+        currentlevel="h",
     },
     {
         id = "rep_ae2_bridge:living",
         value = 0.0,
         color = "pink",
         gauge = nil,
-        currentlevel="l",
+        currentlevel="h",
     },
     {
         id = "rep_ae2_bridge:quantum",
         value = 0.0,
         color = "purple",
         gauge = nil,
-        currentlevel="l",
+        currentlevel="h",
     },
 }  
 
@@ -104,6 +108,7 @@ end
 -- main loop
 
 while true do
+    rebootifnull()
     for i, v in ipairs(data) do
         local value = aebridge.getItem({name = v.id}).count
         data[i].gauge:setValue(value)

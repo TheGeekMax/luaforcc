@@ -479,11 +479,17 @@ local function renderPlayerScreen(G, playerIndex)
   -- main est trop grande pour l'ecran, ce sont les cartes NON
   -- jouables qui sortent du cadre en priorite (jamais une carte
   -- qu'on pourrait vouloir jouer -- ca eviterait un blocage total).
+  local LEGEND_ROWS = 2
   local hand = G.hands[playerIndex]
   local startY = drawY + 2
   mon.setCursorPos(1, startY - 1)
   mon.setTextColor(colors.white)
   mon.write("Ta main (" .. #hand .. ") :")
+  if #hand == 1 then
+    mon.setTextColor(colors.yellow)
+    mon.write("  UNO !")
+    mon.setTextColor(colors.white)
+  end
 
   local order = {}
   for i = 1, #hand do order[#order + 1] = i end
@@ -496,7 +502,8 @@ local function renderPlayerScreen(G, playerIndex)
     end)
   end
 
-  local availRows = math.max(1, math.floor((h - startY + 1) / (CARD_H + 1)))
+  local availH = h - LEGEND_ROWS
+  local availRows = math.max(1, math.floor((availH - startY + 1) / (CARD_H + 1)))
   local colsNormal = math.max(1, math.floor(w / (CARD_W + 1)))
   local cardW, cardH, gap = CARD_W, CARD_H, 1
   if #hand > colsNormal * availRows then
@@ -505,7 +512,7 @@ local function renderPlayerScreen(G, playerIndex)
   end
   local slotW, slotH = cardW + 1, cardH + gap
   local cols = math.max(1, math.floor(w / slotW))
-  local rows = math.max(1, math.floor((h - startY + 1) / slotH))
+  local rows = math.max(1, math.floor((availH - startY + 1) / slotH))
 
   for pos, i in ipairs(order) do
     local card = hand[i]
@@ -513,7 +520,7 @@ local function renderPlayerScreen(G, playerIndex)
     local row = math.floor((pos - 1) / cols)
     local x = 1 + col * slotW
     local y = startY + row * slotH
-    if row < rows and y + cardH - 1 <= h then
+    if row < rows and y + cardH - 1 <= availH then
       local playable = myTurn and not mustDraw and isPlayable(card, G, hand, i)
       local dim = myTurn and not playable
       drawCard(mon, x, y, card, dim, cardW, cardH)
@@ -526,13 +533,14 @@ local function renderPlayerScreen(G, playerIndex)
     end
   end
 
-  if #hand == 1 then
-    mon.setCursorPos(1, h)
-    mon.setBackgroundColor(colors.black)
-    mon.setTextColor(colors.yellow)
-    mon.write("UNO !")
-    mon.setTextColor(colors.white)
-  end
+  -- legende des abreviations, toujours affichee en bas de l'ecran
+  mon.setCursorPos(1, h - 1)
+  mon.setBackgroundColor(colors.black)
+  mon.setTextColor(colors.lightGray)
+  mon.write("SK=Skip  RV=Reverse")
+  mon.setCursorPos(1, h)
+  mon.write("+2=Pioche2  WD=Wild  W4=Wild+4")
+  mon.setTextColor(colors.white)
 
   return clickZones
 end

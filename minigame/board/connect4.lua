@@ -198,29 +198,49 @@ local PLAYER_COLORS = { colors.red, colors.yellow }
 local PLAYER_NAMES = { "Rouge", "Jaune" }
 
 -- ------------------------------------------------------------
--- Pixel art : jeton 4x4 (forme arrondie) et case vide
+-- Pixel art : jeton (forme arrondie) et case vide. La taille du
+-- jeton et l'espacement s'adaptent a la resolution du moniteur
+-- (utile pour un petit moniteur, ex. 2x2 blocs) : on choisit le
+-- plus grand format qui tient encore verticalement (6 rangees +
+-- entete + boutons de fin de partie).
 -- ------------------------------------------------------------
-local PIX = 4
 
-local function iconToken(color)
+local function iconToken(pix, color)
+  if pix == 4 then
+    return {
+      { 0, color, color, 0 },
+      { color, color, color, color },
+      { color, color, color, color },
+      { 0, color, color, 0 },
+    }
+  end
+  -- format compact (3x3)
   return {
-    { 0, color, color, 0 },
-    { color, color, color, color },
-    { color, color, color, color },
-    { 0, color, color, 0 },
+    { color, color, color },
+    { color, color, color },
+    { color, color, color },
   }
 end
 
-local EMPTY_ICON = {
-  { 0, colors.gray, colors.gray, 0 },
-  { colors.gray, 0, 0, colors.gray },
-  { colors.gray, 0, 0, colors.gray },
-  { 0, colors.gray, colors.gray, 0 },
-}
+local function emptyIcon(pix)
+  if pix == 4 then
+    return {
+      { 0, colors.gray, colors.gray, 0 },
+      { colors.gray, 0, 0, colors.gray },
+      { colors.gray, 0, 0, colors.gray },
+      { 0, colors.gray, colors.gray, 0 },
+    }
+  end
+  return {
+    { colors.gray, 0, colors.gray },
+    { 0, colors.gray, 0 },
+    { colors.gray, 0, colors.gray },
+  }
+end
 
-local function drawPixelCell(mon, x, y, icon, highlight)
-  for iy = 1, PIX do
-    for ix = 1, PIX do
+local function drawPixelCell(mon, x, y, pix, icon, highlight)
+  for iy = 1, pix do
+    for ix = 1, pix do
       local color = icon[iy][ix]
       if color == 0 then
         color = highlight and colors.lightGray or colors.black
@@ -242,10 +262,43 @@ local function drawButton(mon, x, y, w, label, bg, fg)
   mon.setTextColor(colors.white)
 end
 
-local BORDER = 1
-local STRIDE = PIX + BORDER
-local GRID_PIX_W = COLS * STRIDE - BORDER
-local GRID_PIX_H = ROWS * STRIDE - BORDER
+-- Paliers essayes du plus spacieux au plus compact : {pix, borderX, borderY}.
+-- borderY=0 economise beaucoup de hauteur (6 rangees) ; borderX reste a
+-- 1 le plus longtemps possible pour que le tap par colonne reste net.
+local LAYOUT_TIERS = {
+  { pix = 4, bx = 1, by = 1 },
+  { pix = 4, bx = 1, by = 0 },
+  { pix = 3, bx = 1, by = 0 },
+  { pix = 3, bx = 0, by = 0 },
+}
+
+-- Espace fixe reserve au-dessus/en-dessous de la grille : 1 ligne
+-- d'entete, 1 ligne de fleches, 1 ligne vide + 1 ligne de boutons
+-- (reservee meme en cours de partie pour eviter que la mise en page
+-- ne "saute" en fin de partie), 1 ligne de legende en bas.
+local CHROME_ROWS = 5
+
+local function computeLayout(w, h)
+  for _, tier in ipairs(LAYOUT_TIERS) do
+    local strideX = tier.pix + tier.bx
+    local strideY = tier.pix + tier.by
+    local gridW = COLS * strideX - tier.bx
+    local gridH = ROWS * strideY - tier.by
+    if gridW <= w and gridH + CHROME_ROWS <= h then
+      return {
+        pix = tier.pix, strideX = strideX, strideY = strideY,
+        gridW = gridW, gridH = gridH,
+      }
+    end
+  end
+  -- rien ne tient parfaitement : on prend le plus compact quand meme
+  local tier = LAYOUT_TIERS[#LAYOUT_TIERS]
+  local strideX, strideY = tier.pix + tier.bx, tier.pix + tier.by
+  return {
+    pix = tier.pix, strideX = strideX, strideY = strideY,
+    gridW = COLS * strideX - tier.bx, gridH = ROWS * strideY - tier.by,
+  }
+end
 
 -- ------------------------------------------------------------
 -- Rendu complet d'un ecran (identique sur les 2 moniteurs).
@@ -257,9 +310,11 @@ local function renderScreen(G, mon)
   mon.clear()
   local clickZones = {}
 
-  local originX = math.max(1, math.floor((w - GRID_PIX_W) / 2) + 1)
+  local L = computeLayout(w, h)
+  local originX = math.max(1, math.floor((w - L.gridW) / 2) + 1)
   local headerY = 1
-  local gridY = 4
+  local arrowY = 2
+  local gridY = 3
 
   mon.setCursorPos(1, headerY)
   mon.setBackgroundColor(colors.black)
@@ -280,16 +335,16 @@ local function renderScreen(G, mon)
   if not G.gameOver then
     -- fleches de colonne cliquables (rangee au-dessus de la grille)
     for c = 1, COLS do
-      local x = originX + (c - 1) * STRIDE
+      local x = originX + (c - 1) * L.strideX
       local full = isColumnFull(G, c)
-      mon.setCursorPos(x, headerY + 2)
+      mon.setCursorPos(x, arrowY)
       mon.setBackgroundColor(colors.black)
       mon.setTextColor(full and colors.gray or PLAYER_COLORS[G.currentPlayer])
       mon.write(full and " " or "v")
       mon.setTextColor(colors.white)
       if not full then
         clickZones[#clickZones + 1] = {
-          x1 = x, y1 = headerY + 2, x2 = x + PIX - 1, y2 = gridY + GRID_PIX_H - 1,
+          x1 = x, y1 = arrowY, x2 = x + L.pix - 1, y2 = gridY + L.gridH - 1,
           action = "drop", col = c,
         }
       end
@@ -306,27 +361,29 @@ local function renderScreen(G, mon)
 
   for r = 1, ROWS do
     for c = 1, COLS do
-      local x = originX + (c - 1) * STRIDE
-      local y = gridY + (r - 1) * STRIDE
+      local x = originX + (c - 1) * L.strideX
+      local y = gridY + (r - 1) * L.strideY
       local val = G.grid[r][c]
-      local icon = (val == 0) and EMPTY_ICON or iconToken(PLAYER_COLORS[val])
+      local icon = (val == 0) and emptyIcon(L.pix) or iconToken(L.pix, PLAYER_COLORS[val])
       local highlight = winSet[r .. ":" .. c] or false
-      drawPixelCell(mon, x, y, icon, highlight)
+      drawPixelCell(mon, x, y, L.pix, icon, highlight)
     end
   end
 
   if G.gameOver then
-    local by = gridY + GRID_PIX_H + 2
-    drawButton(mon, originX, by, 16, "Nouvelle partie", colors.lightGray, colors.black)
-    clickZones[#clickZones + 1] = { x1 = originX, y1 = by, x2 = originX + 15, y2 = by, action = "restart" }
-    drawButton(mon, originX, by + 2, 16, "Quitter", colors.red, colors.white)
-    clickZones[#clickZones + 1] = { x1 = originX, y1 = by + 2, x2 = originX + 15, y2 = by + 2, action = "quit" }
+    local by = gridY + L.gridH + 1
+    local btnW = 15
+    drawButton(mon, originX, by, btnW, "Rejouer", colors.lightGray, colors.black)
+    clickZones[#clickZones + 1] = { x1 = originX, y1 = by, x2 = originX + btnW - 1, y2 = by, action = "restart" }
+    local quitX = originX + btnW + 1
+    drawButton(mon, quitX, by, btnW, "Quitter", colors.red, colors.white)
+    clickZones[#clickZones + 1] = { x1 = quitX, y1 = by, x2 = quitX + btnW - 1, y2 = by, action = "quit" }
   end
 
   mon.setCursorPos(1, h)
   mon.setBackgroundColor(colors.black)
   mon.setTextColor(colors.lightGray)
-  mon.write("Rouge = joueur 1, Jaune = joueur 2")
+  mon.write("Rouge = j1, Jaune = j2")
   mon.setTextColor(colors.white)
 
   return clickZones

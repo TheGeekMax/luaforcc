@@ -257,26 +257,63 @@ local COLOR_HIT = colors.red
 local COLOR_SUNK = colors.black
 local COLOR_MISS = colors.lightBlue
 
--- Paliers de largeur de cellule (du plus large au plus etroit) :
--- on choisit le plus large qui tient dans la largeur du moniteur.
-local CELL_TIERS = { 2, 1 }
+local COLUMN_LETTERS = "ABCDEFGHIJ"
 
-local function computeCellWidth(w)
-  for _, cw in ipairs(CELL_TIERS) do
-    if SIZE * cw <= w then return cw end
-  end
-  return CELL_TIERS[#CELL_TIERS]
+-- Paliers d'affichage (du plus lisible au plus compact) : largeur de
+-- cellule, contours "[ ]" pour les cases pas encore utilisees, et
+-- coordonnees (lettres de colonne + numeros de ligne) ou non.
+local DISPLAY_TIERS = {
+  { cw = 3, brackets = true,  labels = true },
+  { cw = 2, brackets = false, labels = true },
+  { cw = 2, brackets = false, labels = false },
+  { cw = 1, brackets = false, labels = false },
+}
+
+local function rowLabelWidth(tier)
+  return tier.labels and 3 or 0 -- "10 " -- 2 chiffres + 1 espace
 end
 
-local function drawCell(mon, x, y, cw, bg, label, fg)
-  mon.setCursorPos(x, y)
-  mon.setBackgroundColor(bg)
-  mon.setTextColor(fg or colors.white)
-  if cw >= 2 then
-    mon.write(" " .. (label or " "))
-  else
-    mon.write(label or " ")
+local function computeDisplay(w, h)
+  for _, tier in ipairs(DISPLAY_TIERS) do
+    local labelW = rowLabelWidth(tier)
+    local neededW = labelW + SIZE * tier.cw
+    local neededH = (tier.labels and 1 or 0) + SIZE -- ligne d'en-tete colonnes + grille
+    if neededW <= w and neededH <= h then
+      return tier
+    end
   end
+  return DISPLAY_TIERS[#DISPLAY_TIERS]
+end
+
+-- Case vide/pas-encore-tiree : contour "[ ]" plutot qu'un aplat de
+-- couleur, pour bien distinguer les cases entre elles. Toute case
+-- avec un contenu (bateau/touche/rate/coule) reste en aplat de
+-- couleur avec un symbole -- ca donne "case vide = contour, case
+-- avec quelque chose dedans = couleur pleine".
+local function drawCell(mon, x, y, tier, bg, label, isEmpty, fg)
+  mon.setCursorPos(x, y)
+  if isEmpty and tier.brackets then
+    mon.setBackgroundColor(colors.black)
+    mon.setTextColor(colors.lightGray)
+    mon.write("[" .. (label or " ") .. "]")
+  elseif isEmpty then
+    mon.setBackgroundColor(colors.black)
+    mon.setTextColor(colors.lightGray)
+    if tier.cw >= 2 then
+      mon.write("." .. string.rep(" ", tier.cw - 1))
+    else
+      mon.write(".")
+    end
+  else
+    mon.setBackgroundColor(bg)
+    mon.setTextColor(fg or colors.white)
+    if tier.cw >= 2 then
+      mon.write(string.rep(" ", tier.cw - 1) .. (label or " "))
+    else
+      mon.write(label or " ")
+    end
+  end
+  mon.setTextColor(colors.white)
 end
 
 local function drawButton(mon, x, y, w, label, bg, fg)
@@ -299,13 +336,15 @@ local function renderScreen(G, mon, playerIndex)
   mon.clear()
   local clickZones = {}
 
-  local cw = computeCellWidth(w)
-  local gridPixW = SIZE * cw
-  local originX = math.max(1, math.floor((w - gridPixW) / 2) + 1)
+  local tier = computeDisplay(w, h)
+  local labelW = rowLabelWidth(tier)
+  local gridPixW = labelW + SIZE * tier.cw
+  local originX = math.max(1, math.floor((w - gridPixW) / 2) + 1) + labelW
 
   local headerY = 1
   local toggleY = 2
-  local gridY = 3
+  local colHeaderY = 3
+  local gridY = tier.labels and 4 or 3
   local myTurn = (not G.gameOver) and G.currentPlayer == playerIndex
   local view = G.view[playerIndex]
 
@@ -349,45 +388,57 @@ local function renderScreen(G, mon, playerIndex)
     }
   end
 
+  -- en-tete de colonnes (lettres) + labels de ligne (numeros)
+  if tier.labels then
+    mon.setBackgroundColor(colors.black)
+    mon.setTextColor(colors.lightGray)
+    for c = 1, SIZE do
+      local x = originX + (c - 1) * tier.cw
+      mon.setCursorPos(x + math.floor((tier.cw - 1) / 2), colHeaderY)
+      mon.write(COLUMN_LETTERS:sub(c, c))
+    end
+  end
+
   -- grille
   for r = 1, SIZE do
-    for c = 1, SIZE do
-      local x = originX + (c - 1) * cw
-      local y = gridY + (r - 1)
-      local bg, label = COLOR_WATER, nil
+    if tier.labels then
+      mon.setCursorPos(originX - labelW, gridY + (r - 1))
+      mon.setBackgroundColor(colors.black)
+      mon.setTextColor(colors.lightGray)
+      mon.write(string.format("%2d ", r))
+    end
 
-      if not G.gameOver and view == "attack" and myTurn then
-        -- rien de special a afficher, juste l'etat des tirs deja tires
-      end
+    for c = 1, SIZE do
+      local x = originX + (c - 1) * tier.cw
+      local y = gridY + (r - 1)
+      local bg, label, isEmpty = COLOR_WATER, nil, true
 
       if view == "fleet" then
         local hasShip = G.fleet[playerIndex][r][c] ~= 0
         local shot = G.incoming[playerIndex][r][c]
         if shot == "hit" then
           bg = isShipSunkAt(G, playerIndex, r, c) and COLOR_SUNK or COLOR_HIT
-          label = "X"
+          label, isEmpty = "X", false
         elseif shot == "miss" then
-          bg = COLOR_MISS
-          label = "o"
+          bg, label, isEmpty = COLOR_MISS, "o", false
         elseif hasShip then
-          bg = COLOR_SHIP
+          bg, isEmpty = COLOR_SHIP, false
         end
       else -- "attack"
         local shot = G.outgoing[playerIndex][r][c]
         if shot == "hit" then
           bg = isShipSunkAt(G, otherPlayer(playerIndex), r, c) and COLOR_SUNK or COLOR_HIT
-          label = "X"
+          label, isEmpty = "X", false
         elseif shot == "miss" then
-          bg = COLOR_MISS
-          label = "o"
+          bg, label, isEmpty = COLOR_MISS, "o", false
         end
       end
 
-      drawCell(mon, x, y, cw, bg, label)
+      drawCell(mon, x, y, tier, bg, label, isEmpty)
 
       if view == "attack" and myTurn and G.outgoing[playerIndex][r][c] == nil then
         clickZones[#clickZones + 1] = {
-          x1 = x, y1 = y, x2 = x + cw - 1, y2 = y, action = "fire", r = r, c = c,
+          x1 = x, y1 = y, x2 = x + tier.cw - 1, y2 = y, action = "fire", r = r, c = c,
         }
       end
     end

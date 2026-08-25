@@ -3,11 +3,12 @@
   ---------------------------------------------------------------
   luaforcc :: Uno 2 joueurs sur 2 moniteurs (main secrete par ecran)
 
-  Config : les 2 moniteurs sont identifies par leur nom de
-  peripherique (modifiable en haut de ce fichier). Chaque moniteur
-  n'affiche QUE la main du joueur qui lui est assigne -- si les 2
-  moniteurs sont physiquement separes (pieces differentes), chaque
-  joueur ne voit jamais la main de l'autre.
+  Config : les 2 moniteurs sont identifies via le fichier
+  monitors.cfg (voir monitors.lua), pas en dur dans ce script --
+  utile pour un systeme a plusieurs jeux partageant la meme config.
+  Chaque moniteur n'affiche QUE la main du joueur qui lui est
+  assigne -- si les 2 moniteurs sont physiquement separes (pieces
+  differentes), chaque joueur ne voit jamais la main de l'autre.
 
   Regles : Uno classique complet (skip / reverse / +2 / wild /
   wild+4), avec ces choix/simplifications assumes :
@@ -33,8 +34,7 @@
 -- CONFIG
 -- ============================================================
 
-local MONITOR_1_NAME = "monitor_1"
-local MONITOR_2_NAME = "monitor_2"
+local MONITORS_CONFIG_PATH = "monitors.cfg"
 local TEXT_SCALE = 0.5
 
 math.randomseed(os.epoch and os.epoch("utc") or os.time())
@@ -314,6 +314,21 @@ local function resolvePendingColorChoice(G, playerIndex, chosenColor)
   return true
 end
 
+local function handleZoneAction(G, playerIndex, zone)
+  if zone.action == "restart" then
+    return newGame(), false
+  elseif zone.action == "quit" then
+    return G, true
+  elseif zone.action == "play" then
+    applyPlay(G, playerIndex, zone.cardIdx, nil)
+  elseif zone.action == "draw" then
+    applyDraw(G, playerIndex)
+  elseif zone.action == "choose_color" then
+    resolvePendingColorChoice(G, playerIndex, zone.color)
+  end
+  return G, false
+end
+
 -- ============================================================
 -- Hook de test interne (sans effet en jeu normal)
 -- ============================================================
@@ -328,6 +343,7 @@ _G.__uno_internal = {
   topCard = topCard,
   cardLabel = cardLabel,
   COLORS = COLORS,
+  handleZoneAction = handleZoneAction,
 }
 
 if _G.__UNO_TEST_MODE then return end
@@ -337,10 +353,16 @@ if _G.__UNO_TEST_MODE then return end
 -- (non charge en mode test)
 -- ============================================================
 
+local monitorsLib = dofile("monitors.lua")
+local monitorCfg = monitorsLib.load(MONITORS_CONFIG_PATH)
+local MONITOR_1_NAME = monitorCfg.player1
+local MONITOR_2_NAME = monitorCfg.player2
+
 local mon1 = peripheral.wrap(MONITOR_1_NAME)
 local mon2 = peripheral.wrap(MONITOR_2_NAME)
 if not mon1 or not mon2 then
-  error("Moniteurs introuvables. Verifie MONITOR_1_NAME/MONITOR_2_NAME en haut du script.")
+  error("Moniteurs introuvables : verifie '" .. MONITOR_1_NAME .. "' et '" .. MONITOR_2_NAME ..
+    "' (definis dans " .. MONITORS_CONFIG_PATH .. ")")
 end
 
 mon1.setTextScale(TEXT_SCALE)
@@ -448,6 +470,8 @@ local function renderPlayerScreen(G, playerIndex)
     mon.setTextColor(colors.white)
     drawButton(mon, 1, 8, 16, "Nouvelle partie", colors.lightGray, colors.black)
     clickZones[#clickZones + 1] = { x1 = 1, y1 = 8, x2 = 16, y2 = 8, action = "restart" }
+    drawButton(mon, 1, 10, 16, "Quitter", colors.red, colors.white)
+    clickZones[#clickZones + 1] = { x1 = 1, y1 = 10, x2 = 16, y2 = 10, action = "quit" }
     return clickZones
   end
 
@@ -559,19 +583,6 @@ local function zoneAt(zones, x, y)
   return nil
 end
 
-local function handleZoneAction(G, playerIndex, zone)
-  if zone.action == "restart" then
-    return newGame()
-  elseif zone.action == "play" then
-    applyPlay(G, playerIndex, zone.cardIdx, nil)
-  elseif zone.action == "draw" then
-    applyDraw(G, playerIndex)
-  elseif zone.action == "choose_color" then
-    resolvePendingColorChoice(G, playerIndex, zone.color)
-  end
-  return G
-end
-
 -- ============================================================
 -- BOUCLE PRINCIPALE
 -- ============================================================
@@ -626,7 +637,16 @@ while true do
   if playerIndex then
     local zone = zoneAt(lastClickZones[playerIndex], x, y)
     if zone then
-      G = handleZoneAction(G, playerIndex, zone)
+      local quit
+      G, quit = handleZoneAction(G, playerIndex, zone)
+      if quit then
+        mon1.setBackgroundColor(colors.black)
+        mon1.clear()
+        mon2.setBackgroundColor(colors.black)
+        mon2.clear()
+        print("Uno ferme.")
+        return
+      end
       redrawAll(G)
     end
   end

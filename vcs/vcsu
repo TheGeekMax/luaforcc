@@ -143,6 +143,46 @@ local function fetchManifest(cfg, name)
     return content
 end
 
+-- Liste les fichiers d'un dossier du depot via l'API GitHub.
+-- raw.githubusercontent.com ne sait pas lister un dossier, d'ou le
+-- passage par api.github.com (limite a 60 requetes/heure sans jeton).
+-- Retourne une liste de chemins, non recursive.
+local function listFolder(cfg, folder)
+    local url = ("https://api.github.com/repos/%s/contents/%s?ref=%s")
+        :format(cfg.repo, folder, cfg.branch)
+
+    local response, err = http.get(url)
+    if not response then
+        return nil, ("Impossible de lister '%s' (%s)"):format(folder, tostring(err))
+    end
+
+    local body = response.readAll()
+    response.close()
+
+    local ok, data = pcall(textutils.unserialiseJSON, body)
+    if not ok or type(data) ~= "table" then
+        return nil, ("Reponse illisible pour '%s'."):format(folder)
+    end
+
+    -- l'API renvoie un objet (et non un tableau) en cas d'erreur
+    if data.message then
+        return nil, ("'%s' : %s"):format(folder, data.message)
+    end
+
+    local files = {}
+    for _, item in ipairs(data) do
+        if item.type == "file" then
+            files[#files + 1] = item.path
+        end
+    end
+
+    if #files == 0 then
+        return nil, ("Aucun fichier dans '%s'."):format(folder)
+    end
+
+    return files
+end
+
 -- ==========================================================
 -- Parsing (pur, aucune I/O)
 -- ==========================================================
@@ -150,6 +190,7 @@ end
 -- Retourne une liste ordonnee d'items types :
 --   { kind = "file",    remote = "...", dest = "..." }
 --   { kind = "include", project = "..." }
+--   { kind = "all",     folder = "..." }
 --   { kind = "startup", target = "..." }
 local function parseManifest(text, name)
     local items = {}
@@ -170,6 +211,8 @@ local function parseManifest(text, name)
                 print(("[%s:%d] macro invalide : %s"):format(name, lineNo, trimmed))
             elseif macro == "include" then
                 table.insert(items, { kind = "include", project = value })
+            elseif macro == "all" then
+                table.insert(items, { kind = "all", folder = value })
             elseif macro == "startup" then
                 table.insert(items, { kind = "startup", target = value })
             else

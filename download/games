@@ -6,3 +6,4 @@ minigame/board/monitors.lua::monitors.lua
 
 minigame/board/connect4.lua::connect4.lua
 minigame/board/uno.lua::uno.lua
+minigame/board/bataille.lua::bataille.lua

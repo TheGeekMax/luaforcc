@@ -353,8 +353,28 @@ if _G.__UNO_TEST_MODE then return end
 -- (non charge en mode test)
 -- ============================================================
 
-local monitorsLib = dofile("monitors.lua")
-local monitorCfg = monitorsLib.load(MONITORS_CONFIG_PATH)
+-- Resout un chemin relatif au dossier du script en cours d'execution
+-- (pas au dossier courant du shell, qui peut varier selon d'ou on
+-- lance la commande) -- indispensable pour un systeme a plusieurs
+-- jeux ranges chacun dans leur propre dossier.
+local function scriptDir()
+  if shell and shell.getRunningProgram then
+    local p = shell.getRunningProgram()
+    if p then return fs.getDir(p) end
+  end
+  return nil
+end
+
+local function resolveNear(filename)
+  local dir = scriptDir()
+  if dir and dir ~= "" then
+    return fs.combine(dir, filename)
+  end
+  return filename
+end
+
+local monitorsLib = dofile(resolveNear("monitors.lua"))
+local monitorCfg = monitorsLib.load(resolveNear(MONITORS_CONFIG_PATH))
 local MONITOR_1_NAME = monitorCfg.player1
 local MONITOR_2_NAME = monitorCfg.player2
 

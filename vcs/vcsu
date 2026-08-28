@@ -7,6 +7,7 @@
 --   -- ceci est un commentaire (ligne entiere uniquement)
 --
 --   #include: libs            -- inclut les fichiers du projet "libs"
+--   #all: minigame/board      -- prend tous les fichiers de ce dossier
 --   #startup: main.lua        -- lance ce fichier au boot
 --
 --   foldera/file1::main.lua
@@ -263,6 +264,26 @@ local function resolveProject(cfg, name, acc, depth)
             local ok, ierr = resolveProject(cfg, item.project, acc, depth + 1)
             if not ok then
                 return false, ierr
+            end
+
+        elseif item.kind == "all" then
+            -- un dossier entier : chaque fichier atterrit dans le dossier
+            -- courant sous son seul nom, comme le fait "vcs get"
+            local files, aerr = listFolder(cfg, item.folder)
+            if not files then
+                return false, aerr
+            end
+            for _, remote in ipairs(files) do
+                local dest = resolvePath(fs.getName(remote))
+                local key = remote .. "\0" .. dest
+                if not acc.seen[key] then
+                    acc.seen[key] = true
+                    table.insert(acc.files, {
+                        remote = remote,
+                        dest = dest,
+                        project = name,
+                    })
+                end
             end
 
         elseif item.kind == "startup" then

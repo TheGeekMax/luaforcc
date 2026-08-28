@@ -351,20 +351,21 @@ end
 -- de tir) ou "fleet" (ecran au sol, propre flotte). Retourne les
 -- zones cliquables.
 -- ------------------------------------------------------------
-local function renderScreen(G, mon, playerIndex, mode)
+local function renderScreen(G, mon, playerIndex, mode, yOffset)
+  yOffset = yOffset or 0
   local w, h = mon.getSize()
   mon.setBackgroundColor(colors.black)
   mon.clear()
   local clickZones = {}
 
-  local tier = computeDisplay(w, h)
+  local tier = computeDisplay(w, h - yOffset)
   local labelW = rowLabelWidth(tier)
   local gridPixW = labelW + SIZE * tier.cw
   local originX = math.max(1, math.floor((w - gridPixW) / 2) + 1) + labelW
 
-  local headerY = 1
-  local colHeaderY = 2
-  local gridY = tier.labels and 3 or 2
+  local headerY = 1 + yOffset
+  local colHeaderY = 2 + yOffset
+  local gridY = (tier.labels and 3 or 2) + yOffset
   local myTurn = (not G.gameOver) and G.currentPlayer == playerIndex
 
   -- entete : statut de partie + rappel du role de cet ecran
@@ -478,10 +479,16 @@ end
 local lastClickZones = { wall1 = {}, floor1 = {}, wall2 = {}, floor2 = {} }
 _G.__BS_DEBUG_ZONES = function() return lastClickZones end -- hook de test, sans effet en jeu
 
+-- Decalage vertical applique uniquement aux ecrans au sol -- purement
+-- esthetique (le mur n'a pas besoin de cette marge), pour ne pas
+-- coller le contenu tout en haut d'un moniteur pose/incline au sol.
+local FLOOR_Y_OFFSET = 5
+
 local function redrawAll(G)
   for _, key in ipairs(SCREEN_KEYS) do
     local s = SCREENS[key]
-    lastClickZones[key] = renderScreen(G, s.mon, s.player, s.mode)
+    local yOffset = (s.mode == "fleet") and FLOOR_Y_OFFSET or 0
+    lastClickZones[key] = renderScreen(G, s.mon, s.player, s.mode, yOffset)
   end
 end
 

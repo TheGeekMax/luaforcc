@@ -1,25 +1,24 @@
 --[[
   battleship_game.lua
   ---------------------------------------------------------------
-  luaforcc :: Bataille navale, 2 joueurs, 2 moniteurs PRIVES (comme
-  Uno -- si les 2 moniteurs sont physiquement separes, chaque joueur
-  ne voit jamais la flotte de l'autre).
+  luaforcc :: Bataille navale, 2 joueurs, 4 moniteurs PRIVES (2 par
+  joueur -- si les ecrans d'un joueur sont physiquement separes de
+  ceux de l'autre, chacun ne voit jamais la flotte de l'autre).
 
   Grille 10x10, flotte standard : porte-avions(5), cuirasse(4),
   croiseur(3), sous-marin(3), torpilleur(2). Placement ALEATOIRE
   automatique au lancement (pas de placement manuel).
 
-  Chaque joueur peut basculer a tout moment entre 2 vues sur son
-  propre ecran :
-    - "Ma flotte"  : ses bateaux + les tirs recus (touches/coules)
-    - "Mes tirs"   : sa grille de tir sur l'ennemi (touche/rate) --
-                     c'est LA SEULE vue ou on peut tirer, et
-                     seulement si c'est son tour.
+  Chaque joueur a 2 ecrans DEDIES (plus de bouton pour basculer) :
+    - ecran MURAL (monitors.cfg ligne 1/2) : "Mes tirs" -- sa grille
+      de tir sur l'ennemi (touche/rate). C'est LA SEULE ou on peut
+      tirer, et seulement si c'est son tour.
+    - ecran AU SOL (monitors.cfg ligne 4/5, floor1/floor2) :
+      "Mes bateaux" -- sa propre flotte + les tirs recus.
 
-  Rendu compact (cellules 2 caracteres de large x 1 de haut, pas de
-  pixel art) pour rester jouable meme sur un petit moniteur en
-  scale 0.5 -- une grille 10x10 en pixel art 4x4 serait bien trop
-  large.
+  Rendu compact (cellules texte, pas de pixel art) pour rester
+  jouable meme sur un petit moniteur en scale 0.5 -- une grille
+  10x10 en pixel art 4x4 serait bien trop large.
 
   Regle assumee : le tour passe toujours a l'autre joueur, touche
   ou rate (pas de "rejoue si touche" -- simplification pour rester
@@ -27,6 +26,8 @@
   touche").
 
   Config moniteurs chargee depuis monitors.cfg via monitors.lua.
+  Ce jeu EXIGE les ecrans au sol (floor1/floor2) -- voir
+  monitors.requireFloors().
 ]]
 
 -- ============================================================
@@ -123,7 +124,6 @@ local function newGame()
     currentPlayer = 1,
     gameOver = false,
     winner = nil,
-    view = { "attack", "attack" }, -- vue actuelle de chaque joueur : "fleet" ou "attack"
   }
 end
 
@@ -163,12 +163,6 @@ local function fireShot(G, playerIndex, r, c)
   return true
 end
 
-local function setView(G, playerIndex, view)
-  if view ~= "fleet" and view ~= "attack" then return false end
-  G.view[playerIndex] = view
-  return true
-end
-
 local function isShipSunkAt(G, playerIndex, r, c)
   local shipIdx = G.fleet[playerIndex][r][c]
   if shipIdx == 0 then return false end
@@ -183,9 +177,6 @@ local function handleAction(G, playerIndex, action)
   if action.type == "fire" then
     fireShot(G, playerIndex, action.r, action.c)
     return G, false
-  elseif action.type == "toggleView" then
-    setView(G, playerIndex, action.view)
-    return G, false
   elseif action.type == "restart" then
     return newGame(), false
   elseif action.type == "quit" then
@@ -197,7 +188,6 @@ end
 _G.__bs_internal = {
   newGame = newGame,
   fireShot = fireShot,
-  setView = setView,
   isShipSunkAt = isShipSunkAt,
   placeFleetRandomly = placeFleetRandomly,
   totalShipCells = totalShipCells,
@@ -231,19 +221,47 @@ end
 
 local monitorsLib = dofile(resolveNear("monitors.lua"))
 local monitorCfg = monitorsLib.load(resolveNear(MONITORS_CONFIG_PATH))
-local MONITOR_1_NAME = monitorCfg.player1
-local MONITOR_2_NAME = monitorCfg.player2
+monitorsLib.requireFloors(monitorCfg) -- ce jeu a besoin des 2 ecrans au sol
 
-local mon1 = peripheral.wrap(MONITOR_1_NAME)
-local mon2 = peripheral.wrap(MONITOR_2_NAME)
-if not mon1 or not mon2 then
-  error("Moniteurs introuvables : verifie '" .. MONITOR_1_NAME .. "' et '" .. MONITOR_2_NAME ..
-    "' (definis dans " .. MONITORS_CONFIG_PATH .. ")")
+local WALL_1_NAME = monitorCfg.player1
+local WALL_2_NAME = monitorCfg.player2
+local FLOOR_1_NAME = monitorCfg.floor1
+local FLOOR_2_NAME = monitorCfg.floor2
+
+local wall1 = peripheral.wrap(WALL_1_NAME)
+local wall2 = peripheral.wrap(WALL_2_NAME)
+local floor1 = peripheral.wrap(FLOOR_1_NAME)
+local floor2 = peripheral.wrap(FLOOR_2_NAME)
+
+for _, entry in ipairs({
+  { WALL_1_NAME, wall1 }, { WALL_2_NAME, wall2 },
+  { FLOOR_1_NAME, floor1 }, { FLOOR_2_NAME, floor2 },
+}) do
+  if not entry[2] then
+    error("Moniteur introuvable : '" .. entry[1] .. "' (defini dans " .. MONITORS_CONFIG_PATH .. ")")
+  end
 end
 
-mon1.setTextScale(TEXT_SCALE)
-mon2.setTextScale(TEXT_SCALE)
-local monitors = { mon1, mon2 }
+wall1.setTextScale(TEXT_SCALE)
+wall2.setTextScale(TEXT_SCALE)
+floor1.setTextScale(TEXT_SCALE)
+floor2.setTextScale(TEXT_SCALE)
+
+-- Table des 4 ecrans : cle -> { mon=, player=, mode= }. mode="attack"
+-- (ecran mural, "Mes tirs") ou "fleet" (ecran au sol, "Mes bateaux").
+local SCREENS = {
+  wall1  = { mon = wall1,  player = 1, mode = "attack" },
+  floor1 = { mon = floor1, player = 1, mode = "fleet" },
+  wall2  = { mon = wall2,  player = 2, mode = "attack" },
+  floor2 = { mon = floor2, player = 2, mode = "fleet" },
+}
+local SCREEN_KEYS = { "wall1", "floor1", "wall2", "floor2" }
+
+-- nom de moniteur -> cle d'ecran, pour router les touch events
+local NAME_TO_KEY = {
+  [WALL_1_NAME] = "wall1", [FLOOR_1_NAME] = "floor1",
+  [WALL_2_NAME] = "wall2", [FLOOR_2_NAME] = "floor2",
+}
 
 -- ------------------------------------------------------------
 -- Rendu : cellules compactes (texte, pas de pixel art -- une
@@ -308,7 +326,9 @@ local function drawCell(mon, x, y, tier, bg, label, isEmpty, fg)
     mon.setBackgroundColor(bg)
     mon.setTextColor(fg or colors.white)
     if tier.cw >= 2 then
-      mon.write(string.rep(" ", tier.cw - 1) .. (label or " "))
+      local leftPad = math.floor((tier.cw - 1) / 2)
+      local rightPad = (tier.cw - 1) - leftPad
+      mon.write(string.rep(" ", leftPad) .. (label or " ") .. string.rep(" ", rightPad))
     else
       mon.write(label or " ")
     end
@@ -327,10 +347,11 @@ local function drawButton(mon, x, y, w, label, bg, fg)
 end
 
 -- ------------------------------------------------------------
--- Rendu complet d'un ecran pour le joueur `playerIndex`.
--- Retourne les zones cliquables.
+-- Rendu complet d'un ecran. `mode` = "attack" (ecran mural, grille
+-- de tir) ou "fleet" (ecran au sol, propre flotte). Retourne les
+-- zones cliquables.
 -- ------------------------------------------------------------
-local function renderScreen(G, mon, playerIndex)
+local function renderScreen(G, mon, playerIndex, mode)
   local w, h = mon.getSize()
   mon.setBackgroundColor(colors.black)
   mon.clear()
@@ -342,13 +363,11 @@ local function renderScreen(G, mon, playerIndex)
   local originX = math.max(1, math.floor((w - gridPixW) / 2) + 1) + labelW
 
   local headerY = 1
-  local toggleY = 2
-  local colHeaderY = 3
-  local gridY = tier.labels and 4 or 3
+  local colHeaderY = 2
+  local gridY = tier.labels and 3 or 2
   local myTurn = (not G.gameOver) and G.currentPlayer == playerIndex
-  local view = G.view[playerIndex]
 
-  -- entete
+  -- entete : statut de partie + rappel du role de cet ecran
   mon.setCursorPos(1, headerY)
   mon.setBackgroundColor(colors.black)
   if G.gameOver then
@@ -359,42 +378,40 @@ local function renderScreen(G, mon, playerIndex)
       mon.setTextColor(colors.red)
       mon.write("Defaite...")
     end
+  elseif mode == "fleet" then
+    mon.setTextColor(colors.lightGray)
+    mon.write(myTurn and "Mes bateaux (a toi de tirer)" or "Mes bateaux")
   elseif myTurn then
     mon.setTextColor(colors.lime)
-    mon.write("A toi de tirer !")
+    mon.write("Mes tirs -- a toi de jouer !")
   else
     mon.setTextColor(colors.lightGray)
-    mon.write("Tour de l'adversaire...")
+    mon.write("Mes tirs -- tour adverse...")
   end
   mon.setTextColor(colors.white)
 
-  -- bouton bascule de vue (uniquement en cours de partie) ou
   -- boutons de fin de partie -- places IMMEDIATEMENT sous l'entete,
   -- jamais sous la grille : sur un petit ecran, en dependre aurait
   -- pu les faire sortir du cadre et bloquer completement la partie.
+  -- Disponibles sur les 4 ecrans par simplicite.
   if G.gameOver then
     local btnW = math.max(6, math.min(15, math.floor((w - 1) / 2)))
-    drawButton(mon, 1, toggleY, btnW, "Rejouer", colors.lightGray, colors.black)
-    clickZones[#clickZones + 1] = { x1 = 1, y1 = toggleY, x2 = btnW, y2 = toggleY, action = "restart" }
+    drawButton(mon, 1, colHeaderY, btnW, "Rejouer", colors.lightGray, colors.black)
+    clickZones[#clickZones + 1] = { x1 = 1, y1 = colHeaderY, x2 = btnW, y2 = colHeaderY, action = "restart" }
     local quitX = btnW + 2
-    drawButton(mon, quitX, toggleY, btnW, "Quitter", colors.red, colors.white)
-    clickZones[#clickZones + 1] = { x1 = quitX, y1 = toggleY, x2 = quitX + btnW - 1, y2 = toggleY, action = "quit" }
-  else
-    local label = (view == "attack") and "Voir: Mes tirs [<->]" or "Voir: Ma flotte [<->]"
-    drawButton(mon, 1, toggleY, math.min(w, 24), label, colors.lightGray, colors.black)
-    clickZones[#clickZones + 1] = {
-      x1 = 1, y1 = toggleY, x2 = math.min(w, 24), y2 = toggleY,
-      action = "toggleView", view = (view == "attack") and "fleet" or "attack",
-    }
+    drawButton(mon, quitX, colHeaderY, btnW, "Quitter", colors.red, colors.white)
+    clickZones[#clickZones + 1] = { x1 = quitX, y1 = colHeaderY, x2 = quitX + btnW - 1, y2 = colHeaderY, action = "quit" }
+    gridY = colHeaderY + (tier.labels and 2 or 1)
   end
 
   -- en-tete de colonnes (lettres) + labels de ligne (numeros)
   if tier.labels then
+    local chY = G.gameOver and (gridY - 1) or colHeaderY
     mon.setBackgroundColor(colors.black)
     mon.setTextColor(colors.lightGray)
     for c = 1, SIZE do
       local x = originX + (c - 1) * tier.cw
-      mon.setCursorPos(x + math.floor((tier.cw - 1) / 2), colHeaderY)
+      mon.setCursorPos(x + math.floor((tier.cw - 1) / 2), chY)
       mon.write(COLUMN_LETTERS:sub(c, c))
     end
   end
@@ -413,7 +430,7 @@ local function renderScreen(G, mon, playerIndex)
       local y = gridY + (r - 1)
       local bg, label, isEmpty = COLOR_WATER, nil, true
 
-      if view == "fleet" then
+      if mode == "fleet" then
         local hasShip = G.fleet[playerIndex][r][c] ~= 0
         local shot = G.incoming[playerIndex][r][c]
         if shot == "hit" then
@@ -436,7 +453,7 @@ local function renderScreen(G, mon, playerIndex)
 
       drawCell(mon, x, y, tier, bg, label, isEmpty)
 
-      if view == "attack" and myTurn and G.outgoing[playerIndex][r][c] == nil then
+      if mode == "attack" and myTurn and G.outgoing[playerIndex][r][c] == nil then
         clickZones[#clickZones + 1] = {
           x1 = x, y1 = y, x2 = x + tier.cw - 1, y2 = y, action = "fire", r = r, c = c,
         }
@@ -451,19 +468,21 @@ local function renderScreen(G, mon, playerIndex)
   mon.setCursorPos(1, statusY)
   mon.setTextColor(colors.lightGray)
   if statusY <= h then
-    mon.write("Tes bateaux restants: " .. G.shipsRemaining[playerIndex] .. "/" .. #SHIPS)
+    mon.write("Bateaux restants: " .. G.shipsRemaining[playerIndex] .. "/" .. #SHIPS)
   end
   mon.setTextColor(colors.white)
 
   return clickZones
 end
 
-local lastClickZones = { {}, {} }
+local lastClickZones = { wall1 = {}, floor1 = {}, wall2 = {}, floor2 = {} }
 _G.__BS_DEBUG_ZONES = function() return lastClickZones end -- hook de test, sans effet en jeu
 
 local function redrawAll(G)
-  lastClickZones[1] = renderScreen(G, mon1, 1)
-  lastClickZones[2] = renderScreen(G, mon2, 2)
+  for _, key in ipairs(SCREEN_KEYS) do
+    local s = SCREENS[key]
+    lastClickZones[key] = renderScreen(G, s.mon, s.player, s.mode)
+  end
 end
 
 local function zoneAt(zones, x, y)
@@ -479,7 +498,8 @@ end
 
 local G = newGame()
 redrawAll(G)
-print("Bataille navale lancee sur " .. MONITOR_1_NAME .. " / " .. MONITOR_2_NAME .. ". Ctrl+T pour arreter.")
+print("Bataille navale lancee (" .. WALL_1_NAME .. "/" .. FLOOR_1_NAME .. " -- " ..
+  WALL_2_NAME .. "/" .. FLOOR_2_NAME .. "). Ctrl+T pour arreter.")
 
 if _G.__BS_AUTOPILOT then
   -- Mode de test : joue des parties completes via le VRAI pipeline
@@ -487,28 +507,44 @@ if _G.__BS_AUTOPILOT then
   -- os.pullEvent.
   local gamesPlayed, totalTurns = 0, 0
   while gamesPlayed < _G.__BS_AUTOPILOT_GAMES do
-    -- choisit un ecran au hasard, mais ne fait que ce que CET ecran
-    -- autorise reellement (respecte l'isolation par joueur)
-    local monIdx = math.random(2)
-    local zones = lastClickZones[monIdx]
-    if #zones == 0 then
-      error("Aucune zone cliquable sur l'ecran " .. monIdx .. " -- deadlock UI possible")
+    -- les ecrans au sol sont purement informatifs en cours de partie
+    -- (0 zone cliquable, normal) ; on cherche un ecran qui a
+    -- reellement quelque chose a proposer, et on ne crie au
+    -- deadlock que si AUCUN des 4 n'en a.
+    local key, zones
+    for _ = 1, #SCREEN_KEYS do
+      local candidate = SCREEN_KEYS[math.random(#SCREEN_KEYS)]
+      if #lastClickZones[candidate] > 0 then
+        key, zones = candidate, lastClickZones[candidate]
+        break
+      end
     end
-    local chosen = zones[math.random(#zones)]
-    local action
-    if chosen.action == "fire" then
-      action = { type = "fire", r = chosen.r, c = chosen.c }
-    elseif chosen.action == "toggleView" then
-      action = { type = "toggleView", view = chosen.view }
-    elseif chosen.action == "restart" then
-      action = { type = "restart" }
+    if not key then
+      local anyZones = false
+      for _, k in ipairs(SCREEN_KEYS) do
+        if #lastClickZones[k] > 0 then anyZones = true end
+      end
+      if not anyZones then
+        error("Aucun ecran n'a de zone cliquable -- deadlock UI possible")
+      end
+      goto continue
     end
-    if action then
-      G = handleAction(G, monIdx, action)
-      redrawAll(G)
-      totalTurns = totalTurns + 1
-      if chosen.action == "restart" then gamesPlayed = gamesPlayed + 1 end
+    do
+      local chosen = zones[math.random(#zones)]
+      local action
+      if chosen.action == "fire" then
+        action = { type = "fire", r = chosen.r, c = chosen.c }
+      elseif chosen.action == "restart" then
+        action = { type = "restart" }
+      end
+      if action then
+        G = handleAction(G, SCREENS[key].player, action)
+        redrawAll(G)
+        totalTurns = totalTurns + 1
+        if chosen.action == "restart" then gamesPlayed = gamesPlayed + 1 end
+      end
     end
+    ::continue::
     if totalTurns > _G.__BS_AUTOPILOT_GAMES * 6000 then
       error("Autopilot: trop de tours sans terminer assez de parties (deadlock probable)")
     end
@@ -519,15 +555,13 @@ end
 
 while true do
   local event, side, x, y = os.pullEvent("monitor_touch")
-  local monIdx = (side == MONITOR_1_NAME) and 1 or (side == MONITOR_2_NAME) and 2 or nil
-  if monIdx then
-    local zone = zoneAt(lastClickZones[monIdx], x, y)
+  local key = NAME_TO_KEY[side]
+  if key then
+    local zone = zoneAt(lastClickZones[key], x, y)
     if zone then
       local action
       if zone.action == "fire" then
         action = { type = "fire", r = zone.r, c = zone.c }
-      elseif zone.action == "toggleView" then
-        action = { type = "toggleView", view = zone.view }
       elseif zone.action == "restart" then
         action = { type = "restart" }
       elseif zone.action == "quit" then
@@ -535,12 +569,13 @@ while true do
       end
       if action then
         local quit
-        G, quit = handleAction(G, monIdx, action)
+        G, quit = handleAction(G, SCREENS[key].player, action)
         if quit then
-          mon1.setBackgroundColor(colors.black)
-          mon1.clear()
-          mon2.setBackgroundColor(colors.black)
-          mon2.clear()
+          for _, k in ipairs(SCREEN_KEYS) do
+            local mon = SCREENS[k].mon
+            mon.setBackgroundColor(colors.black)
+            mon.clear()
+          end
           print("Bataille navale fermee.")
           return
         end

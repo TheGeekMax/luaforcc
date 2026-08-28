@@ -3,22 +3,35 @@
   ---------------------------------------------------------------
   luaforcc :: chargeur de config partage pour les noms de moniteurs.
 
-  Format du fichier de config (texte brut, 3 lignes) :
-    ligne 1 = nom du moniteur du joueur 1
-    ligne 2 = nom du moniteur du joueur 2
+  Format du fichier de config (texte brut, une entree par ligne) :
+    ligne 1 = nom du moniteur du joueur 1          (obligatoire)
+    ligne 2 = nom du moniteur du joueur 2          (obligatoire)
     ligne 3 = nom du moniteur de controle (menu de selection de jeu,
               gere par l'appli de controle separee -- la plupart des
               jeux individuels n'en ont pas besoin et peuvent l'ignorer)
+    ligne 4 = moniteur au sol du joueur 1          (optionnel)
+    ligne 5 = moniteur au sol du joueur 2          (optionnel)
+
+  Les moniteurs au sol servent aux jeux qui gagnent a etaler leur
+  affichage sur deux surfaces : par exemple une bataille navale, avec
+  la grille de tir au mur et sa propre flotte au sol.
 
   Exemple de contenu pour monitors.cfg :
     monitor_j1
     monitor_j2
     monitor_ctrl
+    monitor_sol1
+    monitor_sol2
 
   Usage depuis un jeu :
     local monitors = dofile("monitors.lua")
     local cfg = monitors.load()      -- lit "monitors.cfg" par defaut
-    -- cfg.player1, cfg.player2, cfg.control (control peut etre nil)
+    -- cfg.player1, cfg.player2
+    -- cfg.control, cfg.floor1, cfg.floor2 peuvent etre nil
+
+  Un jeu qui a besoin des ecrans au sol peut l'exiger explicitement :
+    local cfg = monitors.load()
+    monitors.requireFloors(cfg)      -- erreur claire s'ils manquent
 
   Fonctionne aussi bien sous CC:Tweaked (API `fs`) que dans un
   environnement Lua classique (API `io`), pour rester testable hors jeu.
@@ -62,18 +75,38 @@ function M.load(path)
 
   if not lines then
     error("Fichier de config moniteurs introuvable : " .. path ..
-      "\nCree-le avec 3 lignes : moniteur joueur 1, moniteur joueur 2, moniteur de controle.")
+      "\nCree-le avec au moins 2 lignes : moniteur joueur 1, moniteur joueur 2." ..
+      "\nLignes optionnelles : 3 = controle, 4 et 5 = ecrans au sol.")
   end
   if not lines[1] or lines[1] == "" or not lines[2] or lines[2] == "" then
     error("Config moniteurs invalide (" .. path .. ") : il faut au moins 2 lignes non vides " ..
       "(moniteur joueur 1, moniteur joueur 2).")
   end
 
+  -- une ligne absente ou vide vaut nil : les entrees optionnelles
+  -- peuvent ainsi etre laissees vides sans decaler les suivantes
+  local function opt(n)
+    return (lines[n] and lines[n] ~= "") and lines[n] or nil
+  end
+
   return {
     player1 = lines[1],
     player2 = lines[2],
-    control = (lines[3] and lines[3] ~= "") and lines[3] or nil,
+    control = opt(3),
+    floor1  = opt(4),
+    floor2  = opt(5),
   }
+end
+
+-- A appeler par les jeux qui ne peuvent pas tourner sans les ecrans
+-- au sol, pour echouer avec un message utile plutot que sur un nil.
+function M.requireFloors(cfg)
+  if not cfg.floor1 or not cfg.floor2 then
+    error("Ce jeu a besoin des deux moniteurs au sol.\n" ..
+      "Renseigne les lignes 4 et 5 de monitors.cfg " ..
+      "(sol joueur 1, sol joueur 2).")
+  end
+  return cfg
 end
 
 return M

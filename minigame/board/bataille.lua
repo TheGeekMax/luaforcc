@@ -35,7 +35,7 @@
 -- ============================================================
 
 local MONITORS_CONFIG_PATH = "monitors.cfg"
-local TEXT_SCALE = 0.5
+local TEXT_SCALE = 1
 local SIZE = 10 -- grille SIZE x SIZE
 
 local SHIPS = {

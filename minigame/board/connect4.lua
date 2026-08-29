@@ -301,14 +301,20 @@ local function computeLayout(w, h)
 end
 
 -- ------------------------------------------------------------
--- Rendu complet d'un ecran (identique sur les 2 moniteurs).
+-- Rendu complet d'un ecran. `playerIndex` = le joueur assigne a CET
+-- ecran (1 ou 2) : seules les colonnes sont cliquables quand c'est
+-- reellement le tour de CE joueur -- meme si la grille affichee est
+-- identique sur les 2 moniteurs, seul l'ecran du joueur actif peut
+-- declencher un coup. Ca evite qu'un seul joueur ne joue les 2 tours
+-- depuis son propre ecran.
 -- Retourne les zones cliquables : { {x1,y1,x2,y2, action=...}, ... }
 -- ------------------------------------------------------------
-local function renderScreen(G, mon)
+local function renderScreen(G, mon, playerIndex)
   local w, h = mon.getSize()
   mon.setBackgroundColor(colors.black)
   mon.clear()
   local clickZones = {}
+  local myTurn = (not G.gameOver) and G.currentPlayer == playerIndex
 
   local L = computeLayout(w, h)
   local originX = math.max(1, math.floor((w - L.gridW) / 2) + 1)
@@ -326,23 +332,27 @@ local function renderScreen(G, mon)
       mon.setTextColor(colors.white)
       mon.write("Match nul !")
     end
+  elseif myTurn then
+    mon.setTextColor(PLAYER_COLORS[playerIndex])
+    mon.write("A toi de jouer, " .. PLAYER_NAMES[playerIndex] .. " !")
   else
-    mon.setTextColor(PLAYER_COLORS[G.currentPlayer])
-    mon.write("Au tour de " .. PLAYER_NAMES[G.currentPlayer])
+    mon.setTextColor(colors.lightGray)
+    mon.write("Tour de " .. PLAYER_NAMES[G.currentPlayer] .. "...")
   end
   mon.setTextColor(colors.white)
 
   if not G.gameOver then
-    -- fleches de colonne cliquables (rangee au-dessus de la grille)
+    -- fleches de colonne : cliquables SEULEMENT si c'est le tour de ce joueur
     for c = 1, COLS do
       local x = originX + (c - 1) * L.strideX
       local full = isColumnFull(G, c)
+      local active = myTurn and not full
       mon.setCursorPos(x, arrowY)
       mon.setBackgroundColor(colors.black)
-      mon.setTextColor(full and colors.gray or PLAYER_COLORS[G.currentPlayer])
+      mon.setTextColor(active and PLAYER_COLORS[G.currentPlayer] or colors.gray)
       mon.write(full and " " or "v")
       mon.setTextColor(colors.white)
-      if not full then
+      if active then
         clickZones[#clickZones + 1] = {
           x1 = x, y1 = arrowY, x2 = x + L.pix - 1, y2 = gridY + L.gridH - 1,
           action = "drop", col = c,
@@ -371,6 +381,8 @@ local function renderScreen(G, mon)
   end
 
   if G.gameOver then
+    -- Rejouer/Quitter restent accessibles depuis les 2 ecrans (pas
+    -- une question de tour, la partie est finie pour tout le monde).
     local by = gridY + L.gridH + 1
     local btnW = 15
     drawButton(mon, originX, by, btnW, "Rejouer", colors.lightGray, colors.black)
@@ -383,17 +395,18 @@ local function renderScreen(G, mon)
   mon.setCursorPos(1, h)
   mon.setBackgroundColor(colors.black)
   mon.setTextColor(colors.lightGray)
-  mon.write("Rouge = j1, Jaune = j2")
+  mon.write("Tu es " .. PLAYER_NAMES[playerIndex])
   mon.setTextColor(colors.white)
 
   return clickZones
 end
 
 local lastClickZones = { {}, {} }
+_G.__C4_DEBUG_ZONES = function() return lastClickZones end -- hook de test, sans effet en jeu
 
 local function redrawAll(G)
-  lastClickZones[1] = renderScreen(G, mon1)
-  lastClickZones[2] = renderScreen(G, mon2)
+  lastClickZones[1] = renderScreen(G, mon1, 1)
+  lastClickZones[2] = renderScreen(G, mon2, 2)
 end
 
 local function zoneAt(zones, x, y)
@@ -417,7 +430,9 @@ if _G.__C4_AUTOPILOT then
   -- os.pullEvent, pour valider aussi la couche UI/tactile.
   local gamesPlayed, totalTurns = 0, 0
   while gamesPlayed < _G.__C4_AUTOPILOT_GAMES do
-    local monIdx = math.random(2) -- touche indifferemment l'un ou l'autre moniteur (miroir)
+    -- en cours de partie, seul l'ecran du joueur actif a des zones ;
+    -- une fois la partie finie, les 2 ecrans proposent Rejouer/Quitter
+    local monIdx = G.gameOver and math.random(2) or G.currentPlayer
     local zones = lastClickZones[monIdx]
     if #zones == 0 then
       error("Aucune zone cliquable -- deadlock UI")
@@ -436,7 +451,7 @@ if _G.__C4_AUTOPILOT then
     elseif chosen.action == "restart" then
       action = { type = "restart" }
     end
-    G = handleAction(G, G.currentPlayer, action)
+    G = handleAction(G, monIdx, action)
     redrawAll(G)
     totalTurns = totalTurns + 1
     if chosen.action == "restart" then
@@ -466,7 +481,7 @@ while true do
       end
       if action then
         local quit
-        G, quit = handleAction(G, G.currentPlayer, action)
+        G, quit = handleAction(G, monIdx, action)
         if quit then
           mon1.setBackgroundColor(colors.black)
           mon1.clear()

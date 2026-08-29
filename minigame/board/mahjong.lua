@@ -38,7 +38,6 @@
 
 local MONITORS_CONFIG_PATH = "monitors.cfg"
 local TEXT_SCALE = 1
-local FLOOR_Y_OFFSET = 2
 
 -- ============================================================
 -- TUILES
@@ -456,22 +455,14 @@ end
 
 local monitorsLib = dofile(resolveNear("monitors.lua"))
 local monitorCfg = monitorsLib.load(resolveNear(MONITORS_CONFIG_PATH))
-monitorsLib.requireFloors(monitorCfg)
 
 local WALL_1_NAME = monitorCfg.player1
 local WALL_2_NAME = monitorCfg.player2
-local FLOOR_1_NAME = monitorCfg.floor1
-local FLOOR_2_NAME = monitorCfg.floor2
 
 local wall1 = peripheral.wrap(WALL_1_NAME)
 local wall2 = peripheral.wrap(WALL_2_NAME)
-local floor1 = peripheral.wrap(FLOOR_1_NAME)
-local floor2 = peripheral.wrap(FLOOR_2_NAME)
 
-for _, entry in ipairs({
-  { WALL_1_NAME, wall1 }, { WALL_2_NAME, wall2 },
-  { FLOOR_1_NAME, floor1 }, { FLOOR_2_NAME, floor2 },
-}) do
+for _, entry in ipairs({ { WALL_1_NAME, wall1 }, { WALL_2_NAME, wall2 } }) do
   if not entry[2] then
     error("Moniteur introuvable : '" .. entry[1] .. "' (defini dans " .. MONITORS_CONFIG_PATH .. ")")
   end
@@ -479,20 +470,13 @@ end
 
 wall1.setTextScale(TEXT_SCALE)
 wall2.setTextScale(TEXT_SCALE)
-floor1.setTextScale(TEXT_SCALE)
-floor2.setTextScale(TEXT_SCALE)
 
 local SCREENS = {
-  wall1  = { mon = wall1,  player = 1, mode = "wall" },
-  floor1 = { mon = floor1, player = 1, mode = "floor" },
-  wall2  = { mon = wall2,  player = 2, mode = "wall" },
-  floor2 = { mon = floor2, player = 2, mode = "floor" },
+  wall1 = { mon = wall1, player = 1 },
+  wall2 = { mon = wall2, player = 2 },
 }
-local SCREEN_KEYS = { "wall1", "floor1", "wall2", "floor2" }
-local NAME_TO_KEY = {
-  [WALL_1_NAME] = "wall1", [FLOOR_1_NAME] = "floor1",
-  [WALL_2_NAME] = "wall2", [FLOOR_2_NAME] = "floor2",
-}
+local SCREEN_KEYS = { "wall1", "wall2" }
+local NAME_TO_KEY = { [WALL_1_NAME] = "wall1", [WALL_2_NAME] = "wall2" }
 
 -- ------------------------------------------------------------
 -- Rendu
@@ -561,78 +545,12 @@ local function statusText(G, playerIndex)
   return ""
 end
 
--- Ecran MUR : defausse commune + statut + appels
-local function renderWall(G, mon, playerIndex)
-  local w, h = mon.getSize()
-  mon.setBackgroundColor(colors.black)
-  mon.clear()
-  local clickZones = {}
-
-  mon.setCursorPos(1, 1)
-  mon.setTextColor(colors.white)
-  mon.write(statusText(G, playerIndex))
-
-  mon.setCursorPos(1, 2)
-  mon.setTextColor(colors.lightGray)
-  mon.write("Pioche restante: " .. #G.wall)
-
-  -- boutons d'appel (uniquement pour le joueur concerne)
-  local btnY = 3
-  if not G.gameOver and G.phase == "call" and G.currentPlayer == playerIndex then
-    local x = 1
-    if G.callOptions.ron then
-      drawButton(mon, x, btnY, 7, "RON", colors.red, colors.white)
-      clickZones[#clickZones + 1] = { x1 = x, y1 = btnY, x2 = x + 6, y2 = btnY, action = "ron" }
-      x = x + 8
-    end
-    if G.callOptions.pon then
-      drawButton(mon, x, btnY, 7, "PON", colors.orange, colors.black)
-      clickZones[#clickZones + 1] = { x1 = x, y1 = btnY, x2 = x + 6, y2 = btnY, action = "pon" }
-      x = x + 8
-    end
-    for i, pat in ipairs(G.callOptions.chi) do
-      local label = "CHI " .. pat.result[1] .. pat.result[2] .. pat.result[3]
-      local bw = #label + 2
-      drawButton(mon, x, btnY, bw, label, colors.cyan, colors.black)
-      clickZones[#clickZones + 1] = { x1 = x, y1 = btnY, x2 = x + bw - 1, y2 = btnY, action = "chi", pattern = i }
-      x = x + bw + 1
-    end
-    drawButton(mon, x, btnY, 9, "Passer", colors.lightGray, colors.black)
-    clickZones[#clickZones + 1] = { x1 = x, y1 = btnY, x2 = x + 8, y2 = btnY, action = "pass" }
-  end
-
-  if G.gameOver then
-    local btnW = math.max(6, math.min(15, math.floor((w - 1) / 2)))
-    drawButton(mon, 1, btnY, btnW, "Rejouer", colors.lightGray, colors.black)
-    clickZones[#clickZones + 1] = { x1 = 1, y1 = btnY, x2 = btnW, y2 = btnY, action = "restart" }
-    local quitX = btnW + 2
-    drawButton(mon, quitX, btnY, btnW, "Quitter", colors.red, colors.white)
-    clickZones[#clickZones + 1] = { x1 = quitX, y1 = btnY, x2 = quitX + btnW - 1, y2 = btnY, action = "quit" }
-  end
-
-  -- defausse commune : grille de tuiles, plus recentes en dernier
-  mon.setCursorPos(1, btnY + 2)
-  mon.setTextColor(colors.lightGray)
-  mon.write("Defausse :")
-  local cols = math.max(1, math.floor(w / (TILE_W + 1)))
-  local startY = btnY + 3
-  for i, disc in ipairs(G.discards) do
-    local col = (i - 1) % cols
-    local row = math.floor((i - 1) / cols)
-    local x = 1 + col * (TILE_W + 1)
-    local y = startY + row
-    if y <= h then
-      drawTileCell(mon, x, y, disc.id, disc.by ~= playerIndex)
-    end
-  end
-
-  return clickZones
-end
-
--- Ecran SOL : main privee + melds poses
--- Legende des familles de tuiles, affichee tout en haut de l'ecran
--- au sol (au-dessus de tout le reste, y compris le statut).
-local function drawLegend(mon, w)
+-- Ecran unique par joueur : legende + statut + appels + defausse
+-- commune (recente) + combinaisons posees + main privee. Chaque
+-- section occupe une plage de LIGNES FIXE (peu importe l'etat de la
+-- partie) sauf la main, qui est en tout dernier -- ainsi aucune
+-- section ne peut jamais en chevaucher une autre.
+local function drawLegend(mon)
   mon.setBackgroundColor(colors.black)
   mon.setCursorPos(1, 1)
   mon.setTextColor(COLOR_BY_KIND.m)
@@ -659,58 +577,149 @@ local function drawLegend(mon, w)
   mon.write("=Dragon")
 end
 
-local LEGEND_HEIGHT = 2
+-- Mise en page adaptative en hauteur : sur un grand ecran, on garde
+-- de l'air (legende, sections sur 2 lignes) ; sur un petit ecran, on
+-- passe en mode compact (pas de legende, sections sur 1 ligne) pour
+-- garantir que la main reste TOUJOURS atteignable, meme si ca veut
+-- dire perdre un peu de confort visuel.
+local FULL_HAND_START = 16   -- avec legende + sections 2 lignes
+local COMPACT_HAND_START = 9 -- sans legende, sections 1 ligne
+local MIN_H_FOR_FULL = 20    -- faut au moins ca pour la mise en page complete + 1 ligne de main + bouton
 
-local function renderFloor(G, mon, playerIndex)
+local function computeLayout(h)
+  if h >= MIN_H_FOR_FULL then
+    return {
+      compact = false, showLegend = true, discardRows = 2, meldRows = 2,
+      rowStatus = 3, rowButtons = 4, rowWallcount = 5,
+      rowDiscardLabel = 7, rowDiscard1 = 8, rowDiscard2 = 9,
+      rowMeldsLabel = 11, rowMelds1 = 12, rowMelds2 = 13,
+      rowHandLabel = 15, rowHandStart = FULL_HAND_START,
+    }
+  end
+  return {
+    compact = true, showLegend = false, discardRows = 1, meldRows = 1,
+    rowStatus = 1, rowButtons = 2, rowWallcount = 3,
+    rowDiscardLabel = 4, rowDiscard1 = 5, rowDiscard2 = 5,
+    rowMeldsLabel = 6, rowMelds1 = 7, rowMelds2 = 7,
+    rowHandLabel = 8, rowHandStart = COMPACT_HAND_START,
+  }
+end
+
+local function renderScreen(G, mon, playerIndex)
   local w, h = mon.getSize()
   mon.setBackgroundColor(colors.black)
   mon.clear()
   local clickZones = {}
-  local yOff = FLOOR_Y_OFFSET + LEGEND_HEIGHT
+  local L = computeLayout(h)
 
-  drawLegend(mon, w)
+  if L.showLegend then drawLegend(mon) end
 
-  mon.setCursorPos(1, 1 + yOff)
+  mon.setCursorPos(1, L.rowStatus)
   mon.setTextColor(colors.white)
   mon.write(statusText(G, playerIndex))
+  mon.setTextColor(colors.white)
+
+  -- boutons d'appel (uniquement pour le joueur concerne), OU
+  -- boutons de fin de partie -- jamais les deux en meme temps
+  if not G.gameOver and G.phase == "call" and G.currentPlayer == playerIndex then
+    local x = 1
+    if G.callOptions.ron then
+      drawButton(mon, x, L.rowButtons, 7, "RON", colors.red, colors.white)
+      clickZones[#clickZones + 1] = { x1 = x, y1 = L.rowButtons, x2 = x + 6, y2 = L.rowButtons, action = "ron" }
+      x = x + 8
+    end
+    if G.callOptions.pon then
+      drawButton(mon, x, L.rowButtons, 7, "PON", colors.orange, colors.black)
+      clickZones[#clickZones + 1] = { x1 = x, y1 = L.rowButtons, x2 = x + 6, y2 = L.rowButtons, action = "pon" }
+      x = x + 8
+    end
+    for i, pat in ipairs(G.callOptions.chi) do
+      local label = "CHI " .. pat.result[1] .. pat.result[2] .. pat.result[3]
+      local bw = #label + 2
+      drawButton(mon, x, L.rowButtons, bw, label, colors.cyan, colors.black)
+      clickZones[#clickZones + 1] = { x1 = x, y1 = L.rowButtons, x2 = x + bw - 1, y2 = L.rowButtons, action = "chi", pattern = i }
+      x = x + bw + 1
+    end
+    drawButton(mon, x, L.rowButtons, 9, "Passer", colors.lightGray, colors.black)
+    clickZones[#clickZones + 1] = { x1 = x, y1 = L.rowButtons, x2 = x + 8, y2 = L.rowButtons, action = "pass" }
+  elseif G.gameOver then
+    local btnW = math.max(6, math.min(15, math.floor((w - 1) / 2)))
+    drawButton(mon, 1, L.rowButtons, btnW, "Rejouer", colors.lightGray, colors.black)
+    clickZones[#clickZones + 1] = { x1 = 1, y1 = L.rowButtons, x2 = btnW, y2 = L.rowButtons, action = "restart" }
+    local quitX = btnW + 2
+    drawButton(mon, quitX, L.rowButtons, btnW, "Quitter", colors.red, colors.white)
+    clickZones[#clickZones + 1] = { x1 = quitX, y1 = L.rowButtons, x2 = quitX + btnW - 1, y2 = L.rowButtons, action = "quit" }
+  end
+
+  mon.setCursorPos(1, L.rowWallcount)
+  mon.setTextColor(colors.lightGray)
+  mon.write("Pioche restante: " .. #G.wall)
+  mon.setTextColor(colors.white)
+
+  -- defausse commune : seules les tuiles les PLUS RECENTES sont
+  -- affichees (2 lignes fixes), pour ne jamais deborder sur une
+  -- longue partie -- c'est de toute facon la derniere qui compte
+  -- pour un appel.
+  local cols = math.max(1, math.floor(w / (TILE_W + 1)))
+  local discardSlots = cols * L.discardRows
+  local total = #G.discards
+  mon.setCursorPos(1, L.rowDiscardLabel)
+  mon.setTextColor(colors.lightGray)
+  mon.write("Defausse (" .. total .. "), recentes:")
+  mon.setTextColor(colors.white)
+  local firstShown = math.max(1, total - discardSlots + 1)
+  for i = firstShown, total do
+    local disc = G.discards[i]
+    local pos = i - firstShown
+    local col = pos % cols
+    local row = math.floor(pos / cols)
+    local x = 1 + col * (TILE_W + 1)
+    local y = (row == 0) and L.rowDiscard1 or L.rowDiscard2
+    if row < L.discardRows then
+      drawTileCell(mon, x, y, disc.id, disc.by ~= playerIndex)
+    end
+  end
+
+  -- combinaisons posees (2 lignes fixes : max 4 melds x 3 tuiles = 12,
+  -- toujours largement suffisant)
+  mon.setCursorPos(1, L.rowMeldsLabel)
+  mon.setTextColor(colors.lightGray)
+  mon.write("Combinaisons posees:")
+  mon.setTextColor(colors.white)
+  local mx, mrow = 0, 0
+  for _, meld in ipairs(G.melds[playerIndex]) do
+    for _, id in ipairs(meld.tiles) do
+      if mx >= cols then mx, mrow = 0, mrow + 1 end
+      if mrow < L.meldRows then
+        local x = 1 + mx * (TILE_W + 1)
+        local y = (mrow == 0) and L.rowMelds1 or L.rowMelds2
+        drawTileCell(mon, x, y, id, false)
+      end
+      mx = mx + 1
+    end
+    mx = mx + 1 -- petit espace entre 2 melds
+  end
+
+  -- main privee : SEULE section a hauteur variable, toujours en
+  -- dernier -- rien ne peut donc jamais deborder PAR-DESSUS autre
+  -- chose, tout au plus par-dessus le bas de l'ecran (sans risque
+  -- de recouvrir une autre section).
+  mon.setCursorPos(1, L.rowHandLabel)
+  mon.setTextColor(colors.lightGray)
+  mon.write("Ta main (" .. #G.hands[playerIndex] .. ") :")
+  mon.setTextColor(colors.white)
 
   local myTurn = (not G.gameOver) and G.currentPlayer == playerIndex
   local canDiscard = myTurn and G.phase == "discard"
   local canTsumo = canDiscard and G.canTsumo
 
-  if canTsumo then
-    drawButton(mon, 1, 2 + yOff, 14, "TSUMO !", colors.lime, colors.black)
-    clickZones[#clickZones + 1] = { x1 = 1, y1 = 2 + yOff, x2 = 14, y2 = 2 + yOff, action = "tsumo" }
-  end
-
-  -- melds poses (publics, mais affiches ici pour reference perso)
-  local meldsY = 3 + yOff
-  mon.setCursorPos(1, meldsY)
-  mon.setTextColor(colors.lightGray)
-  mon.write("Combinaisons posees:")
-  local mx = 1
-  local my = meldsY + 1
-  for _, meld in ipairs(G.melds[playerIndex]) do
-    for _, id in ipairs(meld.tiles) do
-      if mx + TILE_W > w then mx = 1 my = my + 1 end
-      drawTileCell(mon, mx, my, id, false)
-      mx = mx + TILE_W + 1
-    end
-    mx = mx + 1
-  end
-
-  -- main privee
-  local handY = my + 2
-  mon.setCursorPos(1, handY - 1)
-  mon.setTextColor(colors.lightGray)
-  mon.write("Ta main (" .. #G.hands[playerIndex] .. ") :")
-
-  local cols = math.max(1, math.floor(w / (TILE_W + 1)))
+  local lastHandRow = L.rowHandStart
   for i, id in ipairs(G.hands[playerIndex]) do
     local col = (i - 1) % cols
     local row = math.floor((i - 1) / cols)
     local x = 1 + col * (TILE_W + 1)
-    local y = handY + row
+    local y = L.rowHandStart + row
+    lastHandRow = y
     if y <= h then
       drawTileCell(mon, x, y, id, false)
       if canDiscard then
@@ -721,8 +730,12 @@ local function renderFloor(G, mon, playerIndex)
     end
   end
 
-  if myTurn and G.phase == "draw" then
-    local by = math.min(h, handY + math.ceil(#G.hands[playerIndex] / cols) + 1)
+  if canTsumo then
+    local by = math.min(h, lastHandRow + 2)
+    drawButton(mon, 1, by, 14, "TSUMO !", colors.lime, colors.black)
+    clickZones[#clickZones + 1] = { x1 = 1, y1 = by, x2 = 14, y2 = by, action = "tsumo" }
+  elseif myTurn and G.phase == "draw" then
+    local by = math.min(h, lastHandRow + 2)
     drawButton(mon, 1, by, 14, "PIOCHER", colors.orange, colors.black)
     clickZones[#clickZones + 1] = { x1 = 1, y1 = by, x2 = 14, y2 = by, action = "draw" }
   end
@@ -730,17 +743,13 @@ local function renderFloor(G, mon, playerIndex)
   return clickZones
 end
 
-local lastClickZones = { wall1 = {}, floor1 = {}, wall2 = {}, floor2 = {} }
+local lastClickZones = { wall1 = {}, wall2 = {} }
 _G.__MJ_DEBUG_ZONES = function() return lastClickZones end -- hook de test, sans effet en jeu
 
 local function redrawAll(G)
   for _, key in ipairs(SCREEN_KEYS) do
     local s = SCREENS[key]
-    if s.mode == "wall" then
-      lastClickZones[key] = renderWall(G, s.mon, s.player)
-    else
-      lastClickZones[key] = renderFloor(G, s.mon, s.player)
-    end
+    lastClickZones[key] = renderScreen(G, s.mon, s.player)
   end
 end
 

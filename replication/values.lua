@@ -17,7 +17,7 @@ function rebootifnull()
         print("no aebridge found", 0)
         sleep(5)
         os.reboot()
-    elseif aebridge.getItem({name = v.id}) == nil then
+    elseif aebridge.getItem({name = "rep_ae2_bridge:earth"}) == nil then
         print("aebridge not ready", 0)
         sleep(5)
         os.reboot()

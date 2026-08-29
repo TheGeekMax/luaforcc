@@ -2,9 +2,10 @@
   familles_game.lua
   ---------------------------------------------------------------
   luaforcc :: Jeu des 7 familles -- theme langages de programmation.
-  Solo contre une IA, sur UN SEUL ecran (le mural, monitors.cfg
-  ligne 1). Pas besoin d'un 2e ecran : la main de l'IA n'a jamais
-  besoin d'etre affichee, donc pas de probleme de secret a gerer.
+  2 JOUEURS HUMAINS, 2 ecrans MURAUX prives (monitors.cfg lignes 1
+  et 2, comme Uno) -- si les 2 moniteurs sont physiquement separes,
+  chaque joueur ne voit jamais la main de l'autre. Pas d'ecran au
+  sol necessaire.
 
   Familles = langages de programmation. Membres (theme des noms
   traditionnels du jeu -> concept technique) :
@@ -29,10 +30,11 @@
       posee de son cote (definitivement gagnee).
     - La partie se termine quand les 7 familles ont ete reunies, ou
       qu'un joueur ne peut plus jouer (main et pioche vides a son
-      tour). Le plus de familles completes gagne.
+      tour, auquel cas il pioche gratuitement s'il le peut). Le plus
+      de familles completes gagne.
 
-  Un seul moniteur utilise (monitors.cfg ligne 1), scale 0.5, pense
-  pour un moniteur de 4 blocs de large.
+  2 moniteurs muraux utilises (monitors.cfg lignes 1 et 2), scale
+  0.5, pense pour des moniteurs de 4 blocs de large.
 ]]
 
 -- ============================================================
@@ -60,6 +62,8 @@ local FAMILIES = {
 local MEMBERS = {
   "Constante", "Variable", "Fonction", "Malloc", "Classe", "Struct",
 }
+
+local SIDE_LABEL = { player1 = "Joueur 1", player2 = "Joueur 2" }
 
 -- ============================================================
 -- MOTEUR DE JEU (pur -- aucune dependance a l'affichage/peripheriques)
@@ -118,27 +122,27 @@ local function missingMembers(hand, f)
   return missing
 end
 
-local function otherSide(side) return (side == "player") and "bot" or "player" end
+local function otherSide(side) return (side == "player1") and "player2" or "player1" end
 
 local function newGame()
   local deck = makeDeck()
   shuffle(deck)
 
-  local hands = { player = {}, bot = {} }
+  local hands = { player1 = {}, player2 = {} }
   for _ = 1, 6 do
-    table.insert(hands.player, table.remove(deck))
-    table.insert(hands.bot, table.remove(deck))
+    table.insert(hands.player1, table.remove(deck))
+    table.insert(hands.player2, table.remove(deck))
   end
 
   return {
     hands = hands,
     pile = deck,
-    completed = { player = {}, bot = {} }, -- completed[side][f] = true
-    completedCount = { player = 0, bot = 0 },
-    currentTurn = "player",
-    log = { "La partie commence ! A toi de jouer." },
+    completed = { player1 = {}, player2 = {} }, -- completed[side][f] = true
+    completedCount = { player1 = 0, player2 = 0 },
+    currentTurn = "player1",
+    log = { "La partie commence ! Au tour de " .. SIDE_LABEL.player1 .. "." },
     gameOver = false,
-    winner = nil, -- "player" | "bot" | "draw"
+    winner = nil, -- "player1" | "player2" | "draw"
   }
 end
 
@@ -164,6 +168,7 @@ local function checkCompletion(G, side, f)
     end
     G.completed[side][f] = true
     G.completedCount[side] = G.completedCount[side] + 1
+    pushLog(G, SIDE_LABEL[side] .. " remporte la famille " .. FAMILIES[f] .. " !")
     return true
   end
   return false
@@ -182,15 +187,13 @@ local function ensureCanAct(G, side)
   if #G.hands[side] == 0 and #G.pile > 0 then
     local drawn = table.remove(G.pile)
     table.insert(G.hands[side], drawn)
-    pushLog(G, (side == "player")
-      and "Ta main etait vide : tu piochais une carte gratuite pour continuer."
-      or "L'IA n'avait plus de carte : elle en pioche une gratuitement.")
+    pushLog(G, SIDE_LABEL[side] .. " n'avait plus de carte : pioche gratuite pour continuer.")
     checkCompletion(G, side, drawn.f)
   end
 end
 
 local function checkGameEnd(G)
-  if G.completedCount.player + G.completedCount.bot >= #FAMILIES then
+  if G.completedCount.player1 + G.completedCount.player2 >= #FAMILIES then
     G.gameOver = true
   else
     ensureCanAct(G, G.currentTurn)
@@ -199,10 +202,10 @@ local function checkGameEnd(G)
     end
   end
   if G.gameOver then
-    if G.completedCount.player > G.completedCount.bot then
-      G.winner = "player"
-    elseif G.completedCount.bot > G.completedCount.player then
-      G.winner = "bot"
+    if G.completedCount.player1 > G.completedCount.player2 then
+      G.winner = "player1"
+    elseif G.completedCount.player2 > G.completedCount.player1 then
+      G.winner = "player2"
     else
       G.winner = "draw"
     end
@@ -225,12 +228,13 @@ local function askCard(G, asker, f, m)
   local target = otherSide(asker)
   local famName, memName = FAMILIES[f], MEMBERS[m]
   local idx = findCard(G.hands[target], f, m)
+  local askerLabel = SIDE_LABEL[asker]
 
   if idx then
     table.remove(G.hands[target], idx)
     table.insert(hand, { f = f, m = m })
-    pushLog(G, (asker == "player" and "Tu demandes" or "L'IA demande") ..
-      " " .. memName .. " (" .. famName .. ") -- carte obtenue, rejoue !")
+    pushLog(G, askerLabel .. " demande " .. memName .. " (" .. famName ..
+      ") -- carte obtenue, rejoue !")
     checkCompletion(G, asker, f)
     -- rejoue : currentTurn ne change pas
   else
@@ -241,19 +245,19 @@ local function askCard(G, asker, f, m)
       -- carte REELLEMENT piochee (drawn.f), pas celle qui a ete
       -- demandee (f) -- une pioche "hors sujet" peut tres bien
       -- completer une AUTRE famille que celle visee.
-      local completed = checkCompletion(G, asker, drawn.f)
+      checkCompletion(G, asker, drawn.f)
       if drawn.f == f and drawn.m == m then
-        pushLog(G, (asker == "player" and "Tu demandes" or "L'IA demande") ..
-          " " .. memName .. " (" .. famName .. ") -- pioche justement cette carte, rejoue !")
+        pushLog(G, askerLabel .. " demande " .. memName .. " (" .. famName ..
+          ") -- pioche justement cette carte, rejoue !")
         -- rejoue
       else
-        pushLog(G, (asker == "player" and "Tu demandes" or "L'IA demande") ..
-          " " .. memName .. " (" .. famName .. ") -- pioche une autre carte, tour termine.")
+        pushLog(G, askerLabel .. " demande " .. memName .. " (" .. famName ..
+          ") -- pioche une autre carte, tour termine.")
         G.currentTurn = target
       end
     else
-      pushLog(G, (asker == "player" and "Tu demandes" or "L'IA demande") ..
-        " " .. memName .. " (" .. famName .. ") -- pioche vide, tour termine.")
+      pushLog(G, askerLabel .. " demande " .. memName .. " (" .. famName ..
+        ") -- pioche vide, tour termine.")
       G.currentTurn = target
     end
   end
@@ -262,50 +266,13 @@ local function askCard(G, asker, f, m)
   return true
 end
 
--- Joue le tour de l'IA jusqu'a ce que ce ne soit plus a elle de
--- jouer (echec/pioche ratee) ou fin de partie. Entierement
--- automatique : aucune interaction utilisateur necessaire.
--- Robuste par elle-meme (n'attend pas que l'appelant ait deja garanti
--- que l'IA peut agir) : elle regle ce cas via ensureCanAct/checkGameEnd.
-local function processBotTurn(G)
-  local safety = 0
-  while not G.gameOver and G.currentTurn == "bot" do
-    safety = safety + 1
-    if safety > 200 then break end -- garde-fou, ne devrait jamais arriver
-
-    local owned = familiesOwned(G.hands.bot)
-    if #owned == 0 then
-      ensureCanAct(G, "bot")
-      owned = familiesOwned(G.hands.bot)
-      if #owned == 0 then
-        -- toujours rien (pioche vide aussi) : fin de partie propre
-        checkGameEnd(G)
-        break
-      end
-    end
-    local f = owned[math.random(#owned)]
-    local missing = missingMembers(G.hands.bot, f)
-    if #missing == 0 then
-      -- ne devrait pas arriver (une famille complete est retiree de
-      -- la main), garde-fou
-      break
-    end
-    local m = missing[math.random(#missing)]
-    local ok = askCard(G, "bot", f, m)
-    if not ok then break end
-  end
-end
-
 -- ============================================================
 -- Hook de test interne (sans effet en jeu normal)
 -- ============================================================
 
-local function handleAction(G, action)
+local function handleAction(G, side, action)
   if action.type == "ask" then
-    local ok = askCard(G, "player", action.f, action.m)
-    if ok and not G.gameOver and G.currentTurn == "bot" then
-      processBotTurn(G)
-    end
+    askCard(G, side, action.f, action.m)
     return G, false
   elseif action.type == "restart" then
     return newGame(), false
@@ -318,11 +285,11 @@ end
 _G.__familles_internal = {
   newGame = newGame,
   askCard = askCard,
-  processBotTurn = processBotTurn,
   familiesOwned = familiesOwned,
   missingMembers = missingMembers,
   hasCard = hasCard,
   checkCompletion = checkCompletion,
+  ensureCanAct = ensureCanAct,
   handleAction = handleAction,
   makeDeck = makeDeck,
   FAMILIES = FAMILIES,
@@ -356,13 +323,25 @@ end
 
 local monitorsLib = dofile(resolveNear("monitors.lua"))
 local monitorCfg = monitorsLib.load(resolveNear(MONITORS_CONFIG_PATH))
-local MONITOR_NAME = monitorCfg.player1 -- seul l'ecran "joueur 1" (mural) est utilise
+local WALL_1_NAME = monitorCfg.player1
+local WALL_2_NAME = monitorCfg.player2
 
-local mon = peripheral.wrap(MONITOR_NAME)
-if not mon then
-  error("Moniteur introuvable : '" .. MONITOR_NAME .. "' (defini dans " .. MONITORS_CONFIG_PATH .. ")")
+local wall1 = peripheral.wrap(WALL_1_NAME)
+local wall2 = peripheral.wrap(WALL_2_NAME)
+for _, entry in ipairs({ { WALL_1_NAME, wall1 }, { WALL_2_NAME, wall2 } }) do
+  if not entry[2] then
+    error("Moniteur introuvable : '" .. entry[1] .. "' (defini dans " .. MONITORS_CONFIG_PATH .. ")")
+  end
 end
-mon.setTextScale(TEXT_SCALE)
+wall1.setTextScale(TEXT_SCALE)
+wall2.setTextScale(TEXT_SCALE)
+
+local SCREENS = {
+  player1 = { mon = wall1, side = "player1" },
+  player2 = { mon = wall2, side = "player2" },
+}
+local SCREEN_KEYS = { "player1", "player2" }
+local NAME_TO_KEY = { [WALL_1_NAME] = "player1", [WALL_2_NAME] = "player2" }
 
 -- ------------------------------------------------------------
 -- Rendu -- cartes "posters" avec bandeau de couleur par famille,
@@ -434,42 +413,48 @@ local function drawButton(mon, x, y, w, label, bg, fg)
   mon.setBackgroundColor(colors.black)
 end
 
-local askPhase = nil -- nil, ou { family = f } quand on choisit le membre a demander
+-- askPhase[side] = nil, ou { family = f } quand ce joueur est en
+-- train de choisir le membre a demander. Etat purement UI, prive a
+-- chaque ecran (independant l'un de l'autre).
+local askPhase = { player1 = nil, player2 = nil }
 
-local function renderScreen(G)
+local function renderScreen(G, mon, side)
   local w, h = mon.getSize()
   mon.setBackgroundColor(colors.black)
   mon.clear()
   local clickZones = {}
+  local myTurn = (not G.gameOver) and G.currentTurn == side
 
   -- entete : score + statut
   mon.setCursorPos(1, 1)
   mon.setTextColor(colors.white)
-  mon.write(string.format("Familles completes -- Toi: %d   IA: %d   Pioche: %d",
-    G.completedCount.player, G.completedCount.bot, #G.pile))
+  mon.write(string.format("Familles completes -- Toi: %d   Adversaire: %d   Pioche: %d",
+    G.completedCount[side], G.completedCount[otherSide(side)], #G.pile))
 
   mon.setCursorPos(1, 2)
   if G.gameOver then
-    if G.winner == "player" then
+    if G.winner == side then
       mon.setTextColor(colors.lime)
       mon.write("Tu as gagne !")
-    elseif G.winner == "bot" then
-      mon.setTextColor(colors.red)
-      mon.write("L'IA a gagne...")
-    else
+    elseif G.winner == "draw" then
       mon.setTextColor(colors.white)
       mon.write("Match nul !")
+    else
+      mon.setTextColor(colors.red)
+      mon.write("Tu as perdu...")
     end
+  elseif myTurn then
+    mon.setTextColor(colors.lime)
+    mon.write("A toi de jouer -- choisis une carte de ta main")
   else
     mon.setTextColor(colors.lightGray)
-    mon.write("A toi de jouer -- choisis une carte de ta main pour demander la suite de sa famille")
+    mon.write("Tour de l'adversaire...")
   end
   mon.setTextColor(colors.white)
 
   -- journal des dernieres actions -- hauteur TOUJOURS FIXE (LOG_LINES
-  -- lignes, quel que soit le nombre d'entrees reellement presentes) :
-  -- sinon la mise en page se resserre au fil de la partie et finit
-  -- par repousser les cartes hors de l'ecran.
+  -- lignes) : sinon la mise en page se resserre au fil de la partie
+  -- et finit par repousser les cartes hors de l'ecran.
   local logY = 4
   mon.setCursorPos(1, logY)
   mon.setTextColor(colors.lightGray)
@@ -496,15 +481,16 @@ local function renderScreen(G)
   end
 
   local cols = math.max(1, math.floor(w / (CARD_W + 1)))
+  local phase = askPhase[side]
 
-  if askPhase then
+  if myTurn and phase then
     -- phase 2 : choix du membre a demander dans la famille selectionnee.
     -- Le bouton Annuler est place a une position FIXE (juste apres le
     -- titre), toujours atteignable meme si la grille en dessous
     -- deborde. Seuls les membres MANQUANTS (cliquables) sont mis dans
     -- la grille -- les membres deja possedes ne reservent pas de
     -- place pour rien.
-    local f = askPhase.family
+    local f = phase.family
     mon.setCursorPos(1, afterLogY)
     mon.setTextColor(colors.white)
     mon.write("Famille " .. FAMILIES[f] .. " -- quel membre demander ?")
@@ -513,7 +499,7 @@ local function renderScreen(G)
     drawButton(mon, 1, cancelY, 14, "Annuler", colors.lightGray, colors.black)
     clickZones[#clickZones + 1] = { x1 = 1, y1 = cancelY, x2 = 14, y2 = cancelY, action = "cancel" }
 
-    local missing = missingMembers(G.hands.player, f)
+    local missing = missingMembers(G.hands[side], f)
     local gridY = cancelY + 2
     for i, m in ipairs(missing) do
       local col = (i - 1) % cols
@@ -531,18 +517,17 @@ local function renderScreen(G)
     -- phase 1 : ta main -- tape une carte pour choisir sa famille
     mon.setCursorPos(1, afterLogY)
     mon.setTextColor(colors.lightGray)
-    mon.write("Ta main (" .. #G.hands.player .. ") :")
+    mon.write("Ta main (" .. #G.hands[side] .. ") :")
     mon.setTextColor(colors.white)
 
     local hand = {}
-    for i, c in ipairs(G.hands.player) do hand[i] = c end
+    for i, c in ipairs(G.hands[side]) do hand[i] = c end
     table.sort(hand, function(a, b)
       if a.f ~= b.f then return a.f < b.f end
       return a.m < b.m
     end)
 
     local gridY = afterLogY + 2
-    local myTurn = (not G.gameOver) and G.currentTurn == "player"
     for i, c in ipairs(hand) do
       local col = (i - 1) % cols
       local row = math.floor((i - 1) / cols)
@@ -562,11 +547,14 @@ local function renderScreen(G)
   return clickZones
 end
 
-local lastClickZones = {}
-_G.__FAMILLES_DEBUG_ZONES = function() return lastClickZones end
+local lastClickZones = { player1 = {}, player2 = {} }
+_G.__FAMILLES_DEBUG_ZONES = function() return lastClickZones end -- hook de test, sans effet en jeu
 
-local function redraw(G)
-  lastClickZones = renderScreen(G)
+local function redrawAll(G)
+  for _, key in ipairs(SCREEN_KEYS) do
+    local s = SCREENS[key]
+    lastClickZones[key] = renderScreen(G, s.mon, s.side)
+  end
 end
 
 local function zoneAt(zones, x, y)
@@ -576,49 +564,60 @@ local function zoneAt(zones, x, y)
   return nil
 end
 
--- ============================================================
--- BOUCLE PRINCIPALE
--- ============================================================
-
-local G = newGame()
-redraw(G)
-print("Jeu des 7 familles lance sur " .. MONITOR_NAME .. ". Ctrl+T pour arreter.")
-
 local function zoneToAction(zone)
-  if zone.action == "pickFamily" then return { special = "pickFamily", f = zone.f } end
   if zone.action == "ask" then return { type = "ask", f = zone.f, m = zone.m } end
-  if zone.action == "cancel" then return { special = "cancel" } end
   if zone.action == "restart" then return { type = "restart" } end
   if zone.action == "quit" then return { type = "quit" } end
   return nil
 end
 
-local function applyZone(G, zone)
-  local action = zoneToAction(zone)
-  if not action then return G, false end
-  if action.special == "pickFamily" then
-    askPhase = { family = action.f }
+-- Applique une zone cliquee sur l'ecran de `side`. Gere aussi les
+-- actions purement UI (pickFamily/cancel) qui ne passent pas par le
+-- moteur.
+local function applyZone(G, side, zone)
+  if zone.action == "pickFamily" then
+    askPhase[side] = { family = zone.f }
     return G, false
-  elseif action.special == "cancel" then
-    askPhase = nil
+  elseif zone.action == "cancel" then
+    askPhase[side] = nil
     return G, false
   end
+  local action = zoneToAction(zone)
+  if not action then return G, false end
   local quit
-  G, quit = handleAction(G, action)
-  if action.type == "ask" or action.type == "restart" then askPhase = nil end
+  G, quit = handleAction(G, side, action)
+  if action.type == "ask" or action.type == "restart" then
+    askPhase.player1 = nil
+    askPhase.player2 = nil
+  end
   return G, quit
 end
+
+-- ============================================================
+-- BOUCLE PRINCIPALE
+-- ============================================================
+
+local G = newGame()
+redrawAll(G)
+print("Jeu des 7 familles (2 joueurs) lance sur " .. WALL_1_NAME .. " / " .. WALL_2_NAME .. ". Ctrl+T pour arreter.")
 
 if _G.__FAMILLES_AUTOPILOT then
   local gamesPlayed, totalTurns = 0, 0
   while gamesPlayed < _G.__FAMILLES_AUTOPILOT_GAMES do
-    if #lastClickZones == 0 then
+    local key, zones
+    for _, candidate in ipairs(SCREEN_KEYS) do
+      if #lastClickZones[candidate] > 0 then
+        key, zones = candidate, lastClickZones[candidate]
+        break
+      end
+    end
+    if not key then
       error("Aucune zone cliquable -- deadlock UI possible")
     end
-    local chosen = lastClickZones[math.random(#lastClickZones)]
+    local chosen = zones[math.random(#zones)]
     local quit
-    G, quit = applyZone(G, chosen)
-    redraw(G)
+    G, quit = applyZone(G, key, chosen)
+    redrawAll(G)
     totalTurns = totalTurns + 1
     if chosen.action == "restart" then gamesPlayed = gamesPlayed + 1 end
     if totalTurns > _G.__FAMILLES_AUTOPILOT_GAMES * 3000 then
@@ -631,18 +630,22 @@ end
 
 while true do
   local event, side, x, y = os.pullEvent("monitor_touch")
-  if side == MONITOR_NAME then
-    local zone = zoneAt(lastClickZones, x, y)
+  local key = NAME_TO_KEY[side]
+  if key then
+    local zone = zoneAt(lastClickZones[key], x, y)
     if zone then
       local quit
-      G, quit = applyZone(G, zone)
+      G, quit = applyZone(G, key, zone)
       if quit then
-        mon.setBackgroundColor(colors.black)
-        mon.clear()
+        for _, k in ipairs(SCREEN_KEYS) do
+          local mon = SCREENS[k].mon
+          mon.setBackgroundColor(colors.black)
+          mon.clear()
+        end
         print("Jeu des 7 familles ferme.")
         return
       end
-      redraw(G)
+      redrawAll(G)
     end
   end
 end

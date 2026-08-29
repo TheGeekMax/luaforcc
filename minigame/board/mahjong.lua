@@ -630,12 +630,45 @@ local function renderWall(G, mon, playerIndex)
 end
 
 -- Ecran SOL : main privee + melds poses
+-- Legende des familles de tuiles, affichee tout en haut de l'ecran
+-- au sol (au-dessus de tout le reste, y compris le statut).
+local function drawLegend(mon, w)
+  mon.setBackgroundColor(colors.black)
+  mon.setCursorPos(1, 1)
+  mon.setTextColor(COLOR_BY_KIND.m)
+  mon.write("m")
+  mon.setTextColor(colors.white)
+  mon.write("=Caractere  ")
+  mon.setTextColor(COLOR_BY_KIND.p)
+  mon.write("p")
+  mon.setTextColor(colors.white)
+  mon.write("=Cercle  ")
+  mon.setTextColor(COLOR_BY_KIND.s)
+  mon.write("s")
+  mon.setTextColor(colors.white)
+  mon.write("=Bambou")
+
+  mon.setCursorPos(1, 2)
+  mon.setTextColor(COLOR_BY_KIND.wind)
+  mon.write("E/S/W/N")
+  mon.setTextColor(colors.white)
+  mon.write("=Vent  ")
+  mon.setTextColor(COLOR_BY_KIND.dragon)
+  mon.write("Wh/Gr/Rd")
+  mon.setTextColor(colors.white)
+  mon.write("=Dragon")
+end
+
+local LEGEND_HEIGHT = 2
+
 local function renderFloor(G, mon, playerIndex)
   local w, h = mon.getSize()
   mon.setBackgroundColor(colors.black)
   mon.clear()
   local clickZones = {}
-  local yOff = FLOOR_Y_OFFSET
+  local yOff = FLOOR_Y_OFFSET + LEGEND_HEIGHT
+
+  drawLegend(mon, w)
 
   mon.setCursorPos(1, 1 + yOff)
   mon.setTextColor(colors.white)

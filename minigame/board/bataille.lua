@@ -480,15 +480,14 @@ local lastClickZones = { wall1 = {}, floor1 = {}, wall2 = {}, floor2 = {} }
 _G.__BS_DEBUG_ZONES = function() return lastClickZones end -- hook de test, sans effet en jeu
 
 -- Decalage vertical applique uniquement aux ecrans au sol -- purement
--- esthetique (le mur n'a pas besoin de cette marge), pour ne pas
--- coller le contenu tout en haut d'un moniteur pose/incline au sol.
+-- esthetique, pour ne pas coller le contenu tout en haut de l'ecran.
+-- Meme valeur appliquee au mur et au sol pour rester coherent visuellement.
 local FLOOR_Y_OFFSET = 5
 
 local function redrawAll(G)
   for _, key in ipairs(SCREEN_KEYS) do
     local s = SCREENS[key]
-    local yOffset = (s.mode == "fleet") and FLOOR_Y_OFFSET or 0
-    lastClickZones[key] = renderScreen(G, s.mon, s.player, s.mode, yOffset)
+    lastClickZones[key] = renderScreen(G, s.mon, s.player, s.mode, FLOOR_Y_OFFSET)
   end
 end
 

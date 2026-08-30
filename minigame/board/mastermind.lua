@@ -403,7 +403,7 @@ local function renderWall(G, mon, side)
       mon.write("Code valide -- en attente de l'adversaire...")
       return clickZones
     end
-    mon.write("Compose ton code secret (4 couleurs, repetitions OK)")
+    mon.write("Compose ton code secret")
 
     mon.setCursorPos(1, 3)
     mon.setTextColor(colors.lightGray)

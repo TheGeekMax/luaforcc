@@ -35,7 +35,7 @@
 -- ============================================================
 
 local MONITORS_CONFIG_PATH = "monitors.cfg"
-local TEXT_SCALE = 1
+local TEXT_SCALE = 0.5
 
 math.randomseed(os.epoch and os.epoch("utc") or os.time())
 
@@ -404,13 +404,91 @@ local function textColorFor(bg)
 end
 
 -- ------------------------------------------------------------
--- Dessin d'une carte (rectangle 4 large x 3 haut + libelle centre)
+-- Dessin d'une carte -- style detaille avec bordure, "façon vraie
+-- carte Uno" : valeur en haut-gauche et bas-droite ; les cartes
+-- speciales (skip/reverse/+2) utilisent leur symbole a la place du
+-- chiffre au meme endroit ; wild affiche "WILD" en haut, et wild+4
+-- affiche en plus "+4" au centre.
 -- ------------------------------------------------------------
-local CARD_W, CARD_H = 4, 3
+local CARD_W, CARD_H = 8, 5     -- carte detaillee (normale)
+local SIMPLE_CARD_W, SIMPLE_CARD_H = 4, 3 -- repli compact (grande main / petit ecran)
 
-local function drawCard(mon, x, y, card, dim, w, h)
-  w = w or CARD_W
-  h = h or CARD_H
+-- Ce qu'on affiche dans les coins (haut-gauche / bas-droite) --
+-- nil pour les wild, qui n'utilisent pas les coins.
+local function cardCorner(card)
+  if card.value == "skip" then return "SK" end
+  if card.value == "reverse" then return "RV" end
+  if card.value == "draw2" then return "+2" end
+  if card.value == "wild" or card.value == "wild4" then return nil end
+  return tostring(card.value)
+end
+
+local function drawCard(mon, x, y, card, dim)
+  local bg = CARD_COLOR_MAP[card.color] or colors.gray
+  local fg = textColorFor(bg)
+  if dim then bg, fg = colors.gray, colors.lightGray end
+
+  local innerW = CARD_W - 2
+  local corner = cardCorner(card)
+  local isWild = (card.value == "wild" or card.value == "wild4")
+
+  -- bordure haute
+  mon.setCursorPos(x, y)
+  mon.setBackgroundColor(bg)
+  mon.setTextColor(fg)
+  mon.write("+" .. string.rep("-", innerW) .. "+")
+
+  -- ligne 1 (interieur) : coin haut-gauche, OU "WILD" centre si wild
+  mon.setCursorPos(x, y + 1)
+  mon.write("|")
+  if isWild then
+    local label = "WILD"
+    local pad = innerW - #label
+    local left = math.floor(pad / 2)
+    mon.write(string.rep(" ", left) .. label .. string.rep(" ", pad - left))
+  else
+    local c = corner or ""
+    mon.write(c .. string.rep(" ", innerW - #c))
+  end
+  mon.write("|")
+
+  -- ligne 2 (interieur, milieu) : "+4" centre si wild4, sinon vide
+  mon.setCursorPos(x, y + 2)
+  mon.write("|")
+  if card.value == "wild4" then
+    local label = "+4"
+    local pad = innerW - #label
+    local left = math.floor(pad / 2)
+    mon.write(string.rep(" ", left) .. label .. string.rep(" ", pad - left))
+  else
+    mon.write(string.rep(" ", innerW))
+  end
+  mon.write("|")
+
+  -- ligne 3 (interieur) : coin bas-droite (vide pour les wild)
+  mon.setCursorPos(x, y + 3)
+  mon.write("|")
+  if isWild then
+    mon.write(string.rep(" ", innerW))
+  else
+    local c = corner or ""
+    mon.write(string.rep(" ", innerW - #c) .. c)
+  end
+  mon.write("|")
+
+  -- bordure basse
+  mon.setCursorPos(x, y + 4)
+  mon.write("+" .. string.rep("-", innerW) .. "+")
+
+  mon.setBackgroundColor(colors.black)
+  mon.setTextColor(colors.white)
+end
+
+-- Version compacte (sans bordure, comme avant) -- utilisee en repli
+-- quand la main est trop grande pour la version detaillee.
+local function drawCardSimple(mon, x, y, card, dim, w, h)
+  w = w or SIMPLE_CARD_W
+  h = h or SIMPLE_CARD_H
   local bg = CARD_COLOR_MAP[card.color] or colors.gray
   local fg = textColorFor(bg)
   if dim then bg, fg = colors.gray, colors.lightGray end
@@ -468,18 +546,21 @@ local function renderPlayerScreen(G, playerIndex)
   end
 
   -- carte du dessus de la defausse + couleur en cours
+  local DISCARD_Y = 3
   local top = topCard(G)
-  drawCard(mon, 1, 3, top, false)
-  mon.setCursorPos(1 + CARD_W + 1, 3)
+  drawCard(mon, 1, DISCARD_Y, top, false)
+  mon.setCursorPos(1 + CARD_W + 1, DISCARD_Y)
   mon.setBackgroundColor(colors.black)
   mon.setTextColor(CARD_COLOR_MAP[G.currentColor] or colors.white)
   mon.write("Couleur: " .. G.currentColor)
   mon.setTextColor(colors.white)
-  mon.setCursorPos(1 + CARD_W + 1, 4)
+  mon.setCursorPos(1 + CARD_W + 1, DISCARD_Y + 1)
   mon.write(#G.drawPile .. " cartes a piocher")
 
+  local belowDiscardY = DISCARD_Y + CARD_H -- 1re ligne libre sous la carte de defausse (qui est haute maintenant)
+
   if G.gameOver then
-    mon.setCursorPos(1, 6)
+    mon.setCursorPos(1, belowDiscardY)
     if G.winner == playerIndex then
       mon.setTextColor(colors.lime)
       mon.write("Tu as gagne !")
@@ -488,17 +569,17 @@ local function renderPlayerScreen(G, playerIndex)
       mon.write("Joueur " .. G.winner .. " a gagne.")
     end
     mon.setTextColor(colors.white)
-    drawButton(mon, 1, 8, 16, "Nouvelle partie", colors.lightGray, colors.black)
-    clickZones[#clickZones + 1] = { x1 = 1, y1 = 8, x2 = 16, y2 = 8, action = "restart" }
-    drawButton(mon, 1, 10, 16, "Quitter", colors.red, colors.white)
-    clickZones[#clickZones + 1] = { x1 = 1, y1 = 10, x2 = 16, y2 = 10, action = "quit" }
+    drawButton(mon, 1, belowDiscardY + 2, 16, "Nouvelle partie", colors.lightGray, colors.black)
+    clickZones[#clickZones + 1] = { x1 = 1, y1 = belowDiscardY + 2, x2 = 16, y2 = belowDiscardY + 2, action = "restart" }
+    drawButton(mon, 1, belowDiscardY + 4, 16, "Quitter", colors.red, colors.white)
+    clickZones[#clickZones + 1] = { x1 = 1, y1 = belowDiscardY + 4, x2 = 16, y2 = belowDiscardY + 4, action = "quit" }
     return clickZones
   end
 
   -- popup choix de couleur (prioritaire sur l'affichage de la main)
   if G.pendingColorChoice and G.currentPlayer == playerIndex then
     local colorNames = { "red", "yellow", "green", "blue" }
-    local by = 6
+    local by = belowDiscardY
     for i, cname in ipairs(colorNames) do
       local bx = 1 + (i - 1) * 6
       drawButton(mon, bx, by, 5, cname:sub(1, 4), CARD_COLOR_MAP[cname], textColorFor(CARD_COLOR_MAP[cname]))
@@ -511,7 +592,7 @@ local function renderPlayerScreen(G, playerIndex)
   -- n'a aucun coup jouable)
   local myTurn = (G.currentPlayer == playerIndex) and not G.pendingColorChoice
   local mustDraw = myTurn and not hasLegalMove(G, playerIndex)
-  local drawY = 6
+  local drawY = belowDiscardY
   drawButton(mon, 1, drawY, 10, "PIOCHER", mustDraw and colors.orange or colors.gray,
     mustDraw and colors.black or colors.lightGray)
   if mustDraw then
@@ -547,13 +628,18 @@ local function renderPlayerScreen(G, playerIndex)
   end
 
   local availH = h - LEGEND_ROWS
-  local availRows = math.max(1, math.floor((availH - startY + 1) / (CARD_H + 1)))
   local colsNormal = math.max(1, math.floor(w / (CARD_W + 1)))
-  local cardW, cardH, gap = CARD_W, CARD_H, 1
-  if #hand > colsNormal * availRows then
-    -- main trop grande pour la taille normale : bascule en compact
-    cardW, cardH, gap = 3, 2, 0
-  end
+  -- IMPORTANT : ce calcul ne doit PAS etre force a un minimum de 1
+  -- (contrairement a `rows` plus bas) : c'est justement le cas "0
+  -- ligne ne rentre" qui doit declencher le repli compact. Le forcer
+  -- a 1 ferait croire a tort que le format normal tient alors qu'il
+  -- deborderait -- plus aucune carte ne serait alors ni affichee ni
+  -- cliquable (blocage total).
+  local rawAvailRowsFull = math.floor((availH - startY + 1) / (CARD_H + 1))
+  local useSimple = rawAvailRowsFull < 1 or (#hand > colsNormal * rawAvailRowsFull)
+  local cardW = useSimple and SIMPLE_CARD_W or CARD_W
+  local cardH = useSimple and SIMPLE_CARD_H or CARD_H
+  local gap = useSimple and 0 or 1
   local slotW, slotH = cardW + 1, cardH + gap
   local cols = math.max(1, math.floor(w / slotW))
   local rows = math.max(1, math.floor((availH - startY + 1) / slotH))
@@ -567,7 +653,11 @@ local function renderPlayerScreen(G, playerIndex)
     if row < rows and y + cardH - 1 <= availH then
       local playable = myTurn and not mustDraw and isPlayable(card, G, hand, i)
       local dim = myTurn and not playable
-      drawCard(mon, x, y, card, dim, cardW, cardH)
+      if useSimple then
+        drawCardSimple(mon, x, y, card, dim)
+      else
+        drawCard(mon, x, y, card, dim)
+      end
       if playable then
         clickZones[#clickZones + 1] = {
           x1 = x, y1 = y, x2 = x + cardW - 1, y2 = y + cardH - 1,
@@ -590,6 +680,7 @@ local function renderPlayerScreen(G, playerIndex)
 end
 
 local lastClickZones = { {}, {} }
+_G.__UNO_DEBUG_ZONES = function() return lastClickZones end
 
 local function redrawAll(G)
   lastClickZones[1] = renderPlayerScreen(G, 1)

@@ -1,0 +1,4 @@
+#startup: main.lua
+
+deco/portal/main.lua::main.lua
+deco/portal/config.lua::config.lua

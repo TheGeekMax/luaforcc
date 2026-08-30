@@ -37,7 +37,7 @@
 -- ============================================================
 
 local MONITORS_CONFIG_PATH = "monitors.cfg"
-local TEXT_SCALE = 0.5
+local TEXT_SCALE = 1
 local CODE_LENGTH = 4
 local MAX_GUESSES = 10
 

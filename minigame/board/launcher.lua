@@ -106,11 +106,19 @@ end
 
 -- Met a jour le repertoire de jeux via l'outil vcsu avant de
 -- demarrer (recupere les dernieres versions depuis le depot
--- TheGeekMax/luaforcc). N'empeche pas le lancement si ca echoue
--- (pas de reseau, vcsu absent, etc.) : le launcher continue avec ce
--- qui est deja present sur place.
+-- TheGeekMax/luaforcc). vcsu travaille dans le repertoire COURANT du
+-- shell (pas forcement /home) : on le force explicitement, puis on
+-- restaure l'ancien apres coup pour ne pas laisser le shell dans un
+-- etat surprenant si on quitte le launcher. N'empeche pas le
+-- lancement si ca echoue (pas de reseau, vcsu absent, etc.) : le
+-- launcher continue avec ce qui est deja present sur place.
 if shell and shell.run then
+  local prevDir = shell.dir and shell.dir() or nil
+  if shell.setDir then shell.setDir(GAMES_DIR) end
+
   local ok = pcall(shell.run, "vcsu", "get", "games")
+
+  if prevDir and shell.setDir then shell.setDir(prevDir) end
   if not ok then
     print("Avertissement : 'vcsu get games' a echoue -- on continue avec les jeux deja presents.")
   end

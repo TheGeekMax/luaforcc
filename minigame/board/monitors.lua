@@ -35,6 +35,14 @@
     -- cfg.player1, cfg.player2
     -- cfg.control, cfg.floor1, cfg.floor2, cfg.shared peuvent etre nil
 
+  A chaque appel, monitors.load() EFFACE tous les ecrans configures
+  (ceux qui sont effectivement renseignes) avant de retourner la
+  config -- comme load() tourne une seule fois au demarrage de
+  chaque jeu, ca garantit un ecran propre a chaque lancement, meme
+  si le jeu precedent (ou un Ctrl+T en plein milieu) a laisse
+  quelque chose affiche. Sans effet hors CC:Tweaked (pas de
+  `peripheral` disponible).
+
   Un jeu qui a besoin des ecrans au sol peut l'exiger explicitement :
     local cfg = monitors.load()
     monitors.requireFloors(cfg)      -- erreur claire s'ils manquent
@@ -47,6 +55,10 @@
 ]]
 
 local DEFAULT_PATH = "monitors.cfg"
+
+-- Toutes les cles de config qui designent un nom de moniteur --
+-- utilisee a la fois pour l'effacement et potentiellement ailleurs.
+local MONITOR_KEYS = { "player1", "player2", "control", "floor1", "floor2", "shared" }
 
 local M = {}
 
@@ -75,6 +87,29 @@ local function readLines(path)
   return lines
 end
 
+-- Efface tous les ecrans effectivement renseignes dans `cfg`. Sans
+-- effet si `peripheral` n'existe pas (hors CC:Tweaked, ex. tests).
+-- Un moniteur introuvable ou une erreur d'effacement est ignoree
+-- (pcall) : mieux vaut demarrer avec un ecran non-efface que planter
+-- le chargement de la config pour ca.
+local function clearAllMonitors(cfg)
+  if not peripheral then return end
+  for _, key in ipairs(MONITOR_KEYS) do
+    local name = cfg[key]
+    if name then
+      pcall(function()
+        local mon = peripheral.wrap(name)
+        if mon then
+          mon.setBackgroundColor(colors.black)
+          mon.setTextColor(colors.white)
+          mon.clear()
+          mon.setCursorPos(1, 1)
+        end
+      end)
+    end
+  end
+end
+
 -- Charge et valide la config. Leve une erreur explicite si le
 -- fichier est absent ou incomplet (mieux vaut planter tout de suite
 -- avec un message clair que de demarrer avec un mauvais moniteur).
@@ -98,7 +133,7 @@ function M.load(path)
     return (lines[n] and lines[n] ~= "") and lines[n] or nil
   end
 
-  return {
+  local cfg = {
     player1 = lines[1],
     player2 = lines[2],
     control = opt(3),
@@ -106,6 +141,10 @@ function M.load(path)
     floor2  = opt(5),
     shared  = opt(6),
   }
+
+  clearAllMonitors(cfg)
+
+  return cfg
 end
 
 -- A appeler par les jeux qui ne peuvent pas tourner sans les ecrans

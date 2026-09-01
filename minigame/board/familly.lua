@@ -143,6 +143,7 @@ local function newGame()
     log = { "La partie commence ! Au tour de " .. SIDE_LABEL.player1 .. "." },
     gameOver = false,
     winner = nil, -- "player1" | "player2" | "draw"
+    lastDrawn = { player1 = nil, player2 = nil }, -- { f=, m= } derniere carte piochee (pas obtenue par demande)
   }
 end
 
@@ -187,6 +188,7 @@ local function ensureCanAct(G, side)
   if #G.hands[side] == 0 and #G.pile > 0 then
     local drawn = table.remove(G.pile)
     table.insert(G.hands[side], drawn)
+    G.lastDrawn[side] = { f = drawn.f, m = drawn.m }
     pushLog(G, SIDE_LABEL[side] .. " n'avait plus de carte : pioche gratuite pour continuer.")
     checkCompletion(G, side, drawn.f)
   end
@@ -241,6 +243,7 @@ local function askCard(G, asker, f, m)
     if #G.pile > 0 then
       local drawn = table.remove(G.pile)
       table.insert(hand, drawn)
+      G.lastDrawn[asker] = { f = drawn.f, m = drawn.m }
       -- important : on verifie la completion de la famille de la
       -- carte REELLEMENT piochee (drawn.f), pas celle qui a ete
       -- demandee (f) -- une pioche "hors sujet" peut tres bien
@@ -323,18 +326,23 @@ end
 
 local monitorsLib = dofile(resolveNear("monitors.lua"))
 local monitorCfg = monitorsLib.load(resolveNear(MONITORS_CONFIG_PATH))
+monitorsLib.requireShared(monitorCfg) -- l'ecran partage (ligne 6) est requis pour ce jeu
+
 local WALL_1_NAME = monitorCfg.player1
 local WALL_2_NAME = monitorCfg.player2
+local SHARED_NAME = monitorCfg.shared
 
 local wall1 = peripheral.wrap(WALL_1_NAME)
 local wall2 = peripheral.wrap(WALL_2_NAME)
-for _, entry in ipairs({ { WALL_1_NAME, wall1 }, { WALL_2_NAME, wall2 } }) do
+local shared = peripheral.wrap(SHARED_NAME)
+for _, entry in ipairs({ { WALL_1_NAME, wall1 }, { WALL_2_NAME, wall2 }, { SHARED_NAME, shared } }) do
   if not entry[2] then
     error("Moniteur introuvable : '" .. entry[1] .. "' (defini dans " .. MONITORS_CONFIG_PATH .. ")")
   end
 end
 wall1.setTextScale(TEXT_SCALE)
 wall2.setTextScale(TEXT_SCALE)
+shared.setTextScale(TEXT_SCALE)
 
 local SCREENS = {
   player1 = { mon = wall1, side = "player1" },
@@ -342,6 +350,7 @@ local SCREENS = {
 }
 local SCREEN_KEYS = { "player1", "player2" }
 local NAME_TO_KEY = { [WALL_1_NAME] = "player1", [WALL_2_NAME] = "player2" }
+-- (le moniteur partage n'est jamais tactile -- purement informatif)
 
 -- ------------------------------------------------------------
 -- Rendu -- cartes "posters" avec bandeau de couleur par famille,
@@ -359,7 +368,7 @@ local function drawCard(mon, x, y, f, m, opts)
   opts = opts or {}
   local dim = opts.dim
   local color = dim and colors.gray or FAMILY_COLORS[f]
-  local borderFg = dim and colors.gray or colors.white
+  local borderFg = dim and colors.gray or (opts.highlight and colors.red or colors.white)
   local famName = FAMILIES[f]
   local memName = m and MEMBERS[m] or nil
 
@@ -534,7 +543,9 @@ local function renderScreen(G, mon, side)
       local x = 1 + col * (CARD_W + 1)
       local y = gridY + row * (CARD_H + 1)
       if y + CARD_H - 1 <= h then
-        drawCard(mon, x, y, c.f, c.m, {})
+        local ld = G.lastDrawn[side]
+        local highlight = ld and ld.f == c.f and ld.m == c.m
+        drawCard(mon, x, y, c.f, c.m, { highlight = highlight })
         if myTurn then
           clickZones[#clickZones + 1] = {
             x1 = x, y1 = y, x2 = x + CARD_W - 1, y2 = y + CARD_H - 1, action = "pickFamily", f = c.f,
@@ -547,6 +558,77 @@ local function renderScreen(G, mon, side)
   return clickZones
 end
 
+-- ------------------------------------------------------------
+-- Ecran PARTAGE (grand moniteur visible des 2 joueurs) : les
+-- familles COMPLETES de chaque joueur, en beau pixel art -- on
+-- reutilise les memes cartes "poster" que sur la main (une famille
+-- complete = ses 6 membres poses cote a cote sous le nom de la
+-- famille). Purement informatif, jamais tactile.
+-- ------------------------------------------------------------
+local function renderShared(G)
+  local w, h = shared.getSize()
+  shared.setBackgroundColor(colors.black)
+  shared.clear()
+
+  shared.setCursorPos(1, 1)
+  shared.setTextColor(colors.white)
+  shared.write(string.format("Familles completes -- Joueur 1: %d   Joueur 2: %d   Pioche: %d",
+    G.completedCount.player1, G.completedCount.player2, #G.pile))
+
+  shared.setCursorPos(1, 2)
+  if G.gameOver then
+    if G.winner == "draw" then
+      shared.write("Match nul !")
+    else
+      shared.setTextColor(colors.lime)
+      shared.write(SIDE_LABEL[G.winner] .. " a gagne !")
+    end
+  else
+    shared.setTextColor(colors.lime)
+    shared.write("Tour de " .. SIDE_LABEL[G.currentTurn])
+  end
+  shared.setTextColor(colors.white)
+
+  local colW = math.max(CARD_W + 2, math.floor(w / 2))
+  local startY = 4
+
+  for pIdx, side in ipairs({ "player1", "player2" }) do
+    local colX = 1 + (pIdx - 1) * colW
+    local y = startY
+
+    if y <= h then
+      shared.setCursorPos(colX, y)
+      shared.setTextColor(colors.lightGray)
+      shared.write(SIDE_LABEL[side] .. " :")
+    end
+    y = y + 1
+
+    local cardsPerRow = math.max(1, math.floor((colW - 1) / (CARD_W + 1)))
+    for f = 1, #FAMILIES do
+      if G.completed[side][f] then
+        if y <= h then
+          shared.setCursorPos(colX, y)
+          shared.setTextColor(FAMILY_COLORS[f])
+          shared.write(FAMILIES[f])
+          shared.setTextColor(colors.white)
+        end
+        y = y + 1
+
+        for m = 1, #MEMBERS do
+          local col = (m - 1) % cardsPerRow
+          local row = math.floor((m - 1) / cardsPerRow)
+          local cx = colX + col * (CARD_W + 1)
+          local cy = y + row * (CARD_H + 1)
+          if cy + CARD_H - 1 <= h then
+            drawCard(shared, cx, cy, f, m, {})
+          end
+        end
+        y = y + math.ceil(#MEMBERS / cardsPerRow) * (CARD_H + 1) + 1
+      end
+    end
+  end
+end
+
 local lastClickZones = { player1 = {}, player2 = {} }
 _G.__FAMILLES_DEBUG_ZONES = function() return lastClickZones end -- hook de test, sans effet en jeu
 
@@ -555,6 +637,7 @@ local function redrawAll(G)
     local s = SCREENS[key]
     lastClickZones[key] = renderScreen(G, s.mon, s.side)
   end
+  renderShared(G)
 end
 
 local function zoneAt(zones, x, y)
@@ -642,6 +725,8 @@ while true do
           mon.setBackgroundColor(colors.black)
           mon.clear()
         end
+        shared.setBackgroundColor(colors.black)
+        shared.clear()
         print("Jeu des 7 familles ferme.")
         return
       end

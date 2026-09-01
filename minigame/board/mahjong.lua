@@ -455,14 +455,17 @@ end
 
 local monitorsLib = dofile(resolveNear("monitors.lua"))
 local monitorCfg = monitorsLib.load(resolveNear(MONITORS_CONFIG_PATH))
+monitorsLib.requireShared(monitorCfg) -- l'ecran partage (ligne 6) est requis pour ce jeu
 
 local WALL_1_NAME = monitorCfg.player1
 local WALL_2_NAME = monitorCfg.player2
+local SHARED_NAME = monitorCfg.shared
 
 local wall1 = peripheral.wrap(WALL_1_NAME)
 local wall2 = peripheral.wrap(WALL_2_NAME)
+local shared = peripheral.wrap(SHARED_NAME)
 
-for _, entry in ipairs({ { WALL_1_NAME, wall1 }, { WALL_2_NAME, wall2 } }) do
+for _, entry in ipairs({ { WALL_1_NAME, wall1 }, { WALL_2_NAME, wall2 }, { SHARED_NAME, shared } }) do
   if not entry[2] then
     error("Moniteur introuvable : '" .. entry[1] .. "' (defini dans " .. MONITORS_CONFIG_PATH .. ")")
   end
@@ -470,6 +473,7 @@ end
 
 wall1.setTextScale(TEXT_SCALE)
 wall2.setTextScale(TEXT_SCALE)
+shared.setTextScale(TEXT_SCALE)
 
 local SCREENS = {
   wall1 = { mon = wall1, player = 1 },
@@ -477,6 +481,8 @@ local SCREENS = {
 }
 local SCREEN_KEYS = { "wall1", "wall2" }
 local NAME_TO_KEY = { [WALL_1_NAME] = "wall1", [WALL_2_NAME] = "wall2" }
+-- (le moniteur partage n'est jamais tactile -- purement informatif,
+-- donc pas d'entree dans NAME_TO_KEY : un touch dessus est ignore)
 
 -- ------------------------------------------------------------
 -- Rendu
@@ -743,6 +749,85 @@ local function renderScreen(G, mon, playerIndex)
   return clickZones
 end
 
+-- ------------------------------------------------------------
+-- Ecran PARTAGE (grand moniteur visible des 2 joueurs) : les
+-- combinaisons posees des 2 cotes (info publique) + l'historique
+-- COMPLET de la defausse (pas limite aux 2 dernieres lignes comme
+-- sur les ecrans muraux individuels). Purement informatif, jamais
+-- tactile -- ce qui est deja sur nos ecrans respectifs reste
+-- inchange, ceci s'ajoute EN PLUS.
+-- ------------------------------------------------------------
+local function renderShared(G)
+  local w, h = shared.getSize()
+  shared.setBackgroundColor(colors.black)
+  shared.clear()
+
+  shared.setCursorPos(1, 1)
+  shared.setTextColor(colors.white)
+  if G.gameOver then
+    if G.winType == "draw" then
+      shared.write("Match nul (pioche epuisee)")
+    else
+      shared.setTextColor(colors.lime)
+      shared.write("Joueur " .. G.winner .. " a gagne (" ..
+        (G.winType == "tsumo" and "Tsumo" or "Ron") .. ") !")
+    end
+  else
+    shared.setTextColor(colors.lime)
+    shared.write("Tour du joueur " .. G.currentPlayer)
+  end
+  shared.setTextColor(colors.lightGray)
+  shared.setCursorPos(1, 2)
+  shared.write("Pioche restante : " .. #G.wall)
+  shared.setTextColor(colors.white)
+
+  -- combinaisons posees, un bloc par joueur cote a cote
+  local meldsY = 4
+  local colW = math.max(20, math.floor(w / 2))
+  for p = 1, 2 do
+    local colX = 1 + (p - 1) * colW
+    shared.setCursorPos(colX, meldsY)
+    shared.setTextColor(colors.lightGray)
+    shared.write("Combinaisons posees -- Joueur " .. p .. " :")
+    shared.setTextColor(colors.white)
+
+    local tilesPerRow = math.max(1, math.floor((colW - 1) / (TILE_W + 1)))
+    local mx, mrow = 0, 0
+    for _, meld in ipairs(G.melds[p]) do
+      for _, id in ipairs(meld.tiles) do
+        if mx >= tilesPerRow then mx, mrow = 0, mrow + 1 end
+        local tx = colX + mx * (TILE_W + 1)
+        local ty = meldsY + 1 + mrow
+        if ty < meldsY + 4 then -- reserve 4 lignes max pour ce bloc
+          drawTileCell(shared, tx, ty, id, false)
+        end
+        mx = mx + 1
+      end
+      mx = mx + 1 -- petit espace entre 2 melds
+    end
+  end
+
+  -- historique complet de la defausse (toutes les tuiles, pas juste
+  -- les plus recentes -- l'ecran est grand, on peut se le permettre)
+  local discardY = meldsY + 6
+  shared.setCursorPos(1, discardY)
+  shared.setTextColor(colors.lightGray)
+  shared.write("Historique complet de la defausse (" .. #G.discards .. ") :")
+  shared.setTextColor(colors.white)
+
+  local cols = math.max(1, math.floor(w / (TILE_W + 1)))
+  local startRow = discardY + 1
+  for i, disc in ipairs(G.discards) do
+    local col = (i - 1) % cols
+    local row = math.floor((i - 1) / cols)
+    local x = 1 + col * (TILE_W + 1)
+    local y = startRow + row
+    if y <= h then
+      drawTileCell(shared, x, y, disc.id, false)
+    end
+  end
+end
+
 local lastClickZones = { wall1 = {}, wall2 = {} }
 _G.__MJ_DEBUG_ZONES = function() return lastClickZones end -- hook de test, sans effet en jeu
 
@@ -751,6 +836,7 @@ local function redrawAll(G)
     local s = SCREENS[key]
     lastClickZones[key] = renderScreen(G, s.mon, s.player)
   end
+  renderShared(G)
 end
 
 local function zoneAt(zones, x, y)
@@ -835,6 +921,8 @@ while true do
             mon.setBackgroundColor(colors.black)
             mon.clear()
           end
+          shared.setBackgroundColor(colors.black)
+          shared.clear()
           print("Mahjong ferme.")
           return
         end

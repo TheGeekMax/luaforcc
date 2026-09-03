@@ -35,6 +35,7 @@ local EXCLUDE = {
   ["monitors.lua"] = true,
   ["monitors.cfg"] = true,
   ["launcher.lua"] = true,
+  ["subpixel.lua"] = true,
 }
 
 -- ============================================================

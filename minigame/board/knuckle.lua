@@ -249,12 +249,16 @@ local SIDE_LABEL = { player1 = "Joueur 1", player2 = "Joueur 2" }
 -- vrai de) : fond blanc, pastilles noires, disposition classique.
 -- ------------------------------------------------------------
 
-local DIE_PIX_W, DIE_PIX_H = 12, 12 -- -> 6 caracteres x 4 caracteres
+local DIE_PIX_W, DIE_PIX_H = 12, 12 -- taille "mur" -> 6 caracteres x 4 caracteres
+local SHARED_DIE_PIX_W, SHARED_DIE_PIX_H = 30, 30 -- taille "partage" -> 15 x 10 caracteres, bien plus gros
 
-local PIP_POS = {
-  topLeft = { 3, 3 }, topRight = { 9, 3 },
-  midLeft = { 3, 6 }, midRight = { 9, 6 }, center = { 6, 6 },
-  botLeft = { 3, 9 }, botRight = { 9, 9 },
+-- Positions des pastilles exprimees en FRACTIONS (0..1) de la
+-- taille de l'icone, pour rester valables quelle que soit la taille
+-- de de choisie (mur ou partage).
+local PIP_POS_FRAC = {
+  topLeft = { 0.25, 0.25 }, topRight = { 0.75, 0.25 },
+  midLeft = { 0.25, 0.5 }, midRight = { 0.75, 0.5 }, center = { 0.5, 0.5 },
+  botLeft = { 0.25, 0.75 }, botRight = { 0.75, 0.75 },
 }
 local PIP_PATTERNS = {
   [1] = { "center" },
@@ -265,27 +269,35 @@ local PIP_PATTERNS = {
   [6] = { "topLeft", "topRight", "midLeft", "midRight", "botLeft", "botRight" },
 }
 
-local function paintPip(grid, cx, cy)
-  for row = math.max(1, cy - 1), math.min(DIE_PIX_H, cy + 1) do
-    for col = math.max(1, cx - 1), math.min(DIE_PIX_W, cx + 1) do
+local function paintPip(grid, pixW, pixH, cx, cy, radius)
+  for row = math.max(1, cy - radius), math.min(pixH, cy + radius) do
+    for col = math.max(1, cx - radius), math.min(pixW, cx + radius) do
       grid[row][col] = colors.black
     end
   end
 end
 
 local DIE_ICON_CACHE = {}
-local function buildDieIcon(value)
-  if DIE_ICON_CACHE[value] then return DIE_ICON_CACHE[value] end
-  local g = subpixel.newGrid(DIE_PIX_W, DIE_PIX_H, colors.white)
+local function buildDieIcon(value, pixW, pixH)
+  pixW = pixW or DIE_PIX_W
+  pixH = pixH or DIE_PIX_H
+  local cacheKey = value .. ":" .. pixW .. "x" .. pixH
+  if DIE_ICON_CACHE[cacheKey] then return DIE_ICON_CACHE[cacheKey] end
+
+  local g = subpixel.newGrid(pixW, pixH, colors.white)
+  local radius = math.max(1, math.floor(math.min(pixW, pixH) / 8))
   for _, posName in ipairs(PIP_PATTERNS[value]) do
-    local p = PIP_POS[posName]
-    paintPip(g, p[1], p[2])
+    local p = PIP_POS_FRAC[posName]
+    local cx = math.floor(p[1] * pixW + 0.5)
+    local cy = math.floor(p[2] * pixH + 0.5)
+    paintPip(g, pixW, pixH, cx, cy, radius)
   end
-  DIE_ICON_CACHE[value] = g
+  DIE_ICON_CACHE[cacheKey] = g
   return g
 end
 
 local DIE_CHAR_W, DIE_CHAR_H = DIE_PIX_W / 2, DIE_PIX_H / 3 -- 6 x 4
+local SHARED_DIE_CHAR_W, SHARED_DIE_CHAR_H = SHARED_DIE_PIX_W / 2, SHARED_DIE_PIX_H / 3 -- 15 x 10
 
 -- ------------------------------------------------------------
 -- Rendu generique
@@ -322,24 +334,34 @@ local function drawEmptySlotCompact(mon, x, y)
   mon.setTextColor(colors.white)
 end
 
-local function drawEmptySlotFull(mon, x, y)
-  for row = 0, DIE_CHAR_H - 1 do
+local function drawEmptySlotFull(mon, x, y, cellW, cellH)
+  for row = 0, cellH - 1 do
     mon.setCursorPos(x, y + row)
     mon.setBackgroundColor(colors.black)
     mon.setTextColor(colors.gray)
-    mon.write(string.rep("-", DIE_CHAR_W))
+    mon.write(string.rep("-", cellW))
   end
   mon.setTextColor(colors.white)
 end
 
--- Dessine une grille complete (3x3) a partir de (x,y). `compact`
--- choisit le format. Si `clickCols` est fourni (liste de bool par
--- colonne), retourne les zones cliquables pour les colonnes
--- autorisees (couvrant toute la hauteur de la grille).
-local function drawGrid(mon, x, y, grid, compact, clickCols)
-  local cellW = compact and 3 or DIE_CHAR_W
-  local cellH = compact and 1 or DIE_CHAR_H
-  local gap = compact and 0 or 1
+-- Parametres (largeur/hauteur en caracteres, taille de l'icone en
+-- pixels sous-pixel, et si on utilise le sous-pixel du tout) pour
+-- chaque "tier" de rendu de grille.
+local GRID_TIERS = {
+  compact = { cellW = 3, cellH = 1, gap = 0, subpixel = false },
+  full    = { cellW = DIE_CHAR_W, cellH = DIE_CHAR_H, gap = 1, subpixel = true, pixW = DIE_PIX_W, pixH = DIE_PIX_H },
+  big     = { cellW = SHARED_DIE_CHAR_W, cellH = SHARED_DIE_CHAR_H, gap = 1, subpixel = true,
+              pixW = SHARED_DIE_PIX_W, pixH = SHARED_DIE_PIX_H },
+}
+
+-- Dessine une grille complete (3x3) a partir de (x,y). `tier` =
+-- "compact" | "full" | "big" (voir GRID_TIERS). Si `clickCols` est
+-- fourni (liste de bool par colonne), retourne les zones cliquables
+-- pour les colonnes autorisees (couvrant toute la hauteur de la
+-- grille).
+local function drawGrid(mon, x, y, grid, tier, clickCols)
+  local t = GRID_TIERS[tier]
+  local cellW, cellH, gap = t.cellW, t.cellH, t.gap
   local slotW, slotH = cellW + gap, cellH + gap
   local zones = {}
 
@@ -352,11 +374,11 @@ local function drawGrid(mon, x, y, grid, compact, clickCols)
       local cellY = y + (visualRow - 1) * slotH
       local value = grid[col][row]
       if value then
-        if compact then drawDieCompact(mon, colX, cellY, value)
-        else subpixel.draw(mon, colX, cellY, buildDieIcon(value), DIE_PIX_W, DIE_PIX_H) end
+        if t.subpixel then subpixel.draw(mon, colX, cellY, buildDieIcon(value, t.pixW, t.pixH), t.pixW, t.pixH)
+        else drawDieCompact(mon, colX, cellY, value) end
       else
-        if compact then drawEmptySlotCompact(mon, colX, cellY)
-        else drawEmptySlotFull(mon, colX, cellY) end
+        if t.subpixel then drawEmptySlotFull(mon, colX, cellY, cellW, cellH)
+        else drawEmptySlotCompact(mon, colX, cellY) end
       end
     end
 
@@ -381,21 +403,21 @@ local function drawGrid(mon, x, y, grid, compact, clickCols)
 end
 
 -- Determine si le format detaille (sous-pixel) tient dans la
--- hauteur/largeur disponible pour DEUX grilles empilees + l'entete +
--- le de courant ; sinon bascule en compact.
+-- hauteur/largeur disponible pour l'ecran mural (de courant + UNE
+-- seule grille, la sienne -- plus de grille adverse sur cet ecran).
 local function chooseTierForWall(w, h)
   local fullGridW = COLS * (DIE_CHAR_W + 1) - 1
   local fullGridH = ROWS * (DIE_CHAR_H + 1) + 1
-  -- 2 grilles + entete (3 lignes) + de courant (DIE_CHAR_H+2 lignes) + marges
-  local neededH = 3 + (DIE_CHAR_H + 2) + fullGridH + 1 + fullGridH
-  if fullGridW <= w and neededH <= h then return false end -- false = pas compact
-  return true
+  -- entete (3 lignes) + de courant (DIE_CHAR_H+2 lignes) + 1 grille
+  local neededH = 3 + (DIE_CHAR_H + 2) + fullGridH
+  if fullGridW <= w and neededH <= h then return "full" end
+  return "compact"
 end
 
 -- ------------------------------------------------------------
--- Ecran MURAL (par joueur) : ton de courant + ta grille (cliquable
--- si c'est ton tour) + la grille adverse (reference), empilees a la
--- verticale.
+-- Ecran MURAL (par joueur) : uniquement TON de courant + TA grille
+-- (cliquable si c'est ton tour) -- plus de grille adverse ici, elle
+-- est desormais reservee a l'ecran partage.
 -- ------------------------------------------------------------
 local function renderWall(G, mon, side)
   local w, h = mon.getSize()
@@ -404,7 +426,7 @@ local function renderWall(G, mon, side)
   local clickZones = {}
   local opponent = otherSide(side)
   local myTurn = (not G.gameOver) and G.currentPlayer == side
-  local compact = chooseTierForWall(w, h)
+  local tier = chooseTierForWall(w, h)
 
   mon.setCursorPos(1, 1)
   mon.setTextColor(colors.white)
@@ -449,11 +471,11 @@ local function renderWall(G, mon, side)
   mon.write(myTurn and "Ton de :" or "De de l'adversaire :")
   mon.setTextColor(colors.white)
   y = y + 1
-  if compact then
+  if tier == "compact" then
     drawDieCompact(mon, 1, y, G.currentRoll)
     y = y + 2
   else
-    subpixel.draw(mon, 1, y, buildDieIcon(G.currentRoll), DIE_PIX_W, DIE_PIX_H)
+    subpixel.draw(mon, 1, y, buildDieIcon(G.currentRoll, DIE_PIX_W, DIE_PIX_H), DIE_PIX_W, DIE_PIX_H)
     y = y + DIE_CHAR_H + 1
   end
 
@@ -467,23 +489,16 @@ local function renderWall(G, mon, side)
     clickCols = {}
     for col = 1, COLS do clickCols[col] = not isColumnFull(G.grids[side][col]) end
   end
-  local myZones, _, myH = drawGrid(mon, 1, y, G.grids[side], compact, clickCols)
+  local myZones = drawGrid(mon, 1, y, G.grids[side], tier, clickCols)
   for _, z in ipairs(myZones) do clickZones[#clickZones + 1] = z end
-  y = y + myH + 1
-
-  mon.setCursorPos(1, y)
-  mon.setTextColor(colors.lightGray)
-  mon.write("Grille adverse :")
-  mon.setTextColor(colors.white)
-  y = y + 1
-  drawGrid(mon, 1, y, G.grids[opponent], compact, nil)
 
   return clickZones
 end
 
 -- ------------------------------------------------------------
--- Ecran PARTAGE : les 2 grilles cote a cote a l'horizontale, vue
--- d'ensemble non-interactive.
+-- Ecran PARTAGE : les 2 grilles cote a cote a l'horizontale, en TRES
+-- GROS (taille "big", dediee a ce grand ecran) -- vue d'ensemble
+-- non-interactive.
 -- ------------------------------------------------------------
 local function renderShared(G)
   local w, h = shared.getSize()
@@ -505,9 +520,23 @@ local function renderShared(G)
   end
   shared.setTextColor(colors.white)
 
-  local compact = chooseTierForWall(math.floor(w / 2), h - 2) -- verifie que CHAQUE moitie tient
+  -- essaie le format "big" (bien plus gros que le mur) ; ne bascule
+  -- en "full" (taille mur) que si "big" ne tient vraiment pas, et en
+  -- dernier recours en "compact".
+  local bigGridW = COLS * (SHARED_DIE_CHAR_W + 1) - 1
+  local bigGridH = ROWS * (SHARED_DIE_CHAR_H + 1) + 1
   local colGap = 4
-  local halfW = COLS * ((compact and 3 or DIE_CHAR_W) + 1) - 1
+  local tier
+  if 2 * bigGridW + colGap <= w and bigGridH + 2 <= h then
+    tier = "big"
+  elseif chooseTierForWall(math.floor((w - colGap) / 2), h - 2) == "full" then
+    tier = "full"
+  else
+    tier = "compact"
+  end
+
+  local cellW = GRID_TIERS[tier].cellW
+  local halfW = COLS * (cellW + 1) - 1
 
   local y = 3
   shared.setCursorPos(1, y)
@@ -519,8 +548,8 @@ local function renderShared(G)
   shared.setTextColor(colors.white)
 
   y = y + 1
-  drawGrid(shared, 1, y, G.grids.player1, compact, nil)
-  drawGrid(shared, x2, y, G.grids.player2, compact, nil)
+  drawGrid(shared, 1, y, G.grids.player1, tier, nil)
+  drawGrid(shared, x2, y, G.grids.player2, tier, nil)
 end
 
 local lastClickZones = { player1 = {}, player2 = {} }

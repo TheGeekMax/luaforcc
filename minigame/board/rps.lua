@@ -23,7 +23,7 @@
 -- ============================================================
 
 local MONITORS_CONFIG_PATH = "monitors.cfg"
-local TEXT_SCALE = 2
+local TEXT_SCALE = 1.5
 local WIN_SCORE = 5
 
 -- ============================================================

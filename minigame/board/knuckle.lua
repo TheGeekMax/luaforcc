@@ -216,31 +216,42 @@ end
 
 local monitorsLib = dofile(resolveNear("monitors.lua"))
 local monitorCfg = monitorsLib.load(resolveNear(MONITORS_CONFIG_PATH))
-monitorsLib.requireShared(monitorCfg)
+monitorsLib.requireFloors(monitorCfg)
 
 local WALL_1_NAME = monitorCfg.player1
 local WALL_2_NAME = monitorCfg.player2
-local SHARED_NAME = monitorCfg.shared
+local FLOOR_1_NAME = monitorCfg.floor1
+local FLOOR_2_NAME = monitorCfg.floor2
 
 local wall1 = peripheral.wrap(WALL_1_NAME)
 local wall2 = peripheral.wrap(WALL_2_NAME)
-local shared = peripheral.wrap(SHARED_NAME)
-for _, entry in ipairs({ { WALL_1_NAME, wall1 }, { WALL_2_NAME, wall2 }, { SHARED_NAME, shared } }) do
+local floor1 = peripheral.wrap(FLOOR_1_NAME)
+local floor2 = peripheral.wrap(FLOOR_2_NAME)
+for _, entry in ipairs({
+  { WALL_1_NAME, wall1 }, { WALL_2_NAME, wall2 },
+  { FLOOR_1_NAME, floor1 }, { FLOOR_2_NAME, floor2 },
+}) do
   if not entry[2] then
     error("Moniteur introuvable : '" .. entry[1] .. "' (defini dans " .. MONITORS_CONFIG_PATH .. ")")
   end
 end
 wall1.setTextScale(TEXT_SCALE)
 wall2.setTextScale(TEXT_SCALE)
-shared.setTextScale(TEXT_SCALE)
+floor1.setTextScale(TEXT_SCALE)
+floor2.setTextScale(TEXT_SCALE)
 
+-- Chaque joueur a un mur (son plateau, interactif) ET un sol (le
+-- plateau ADVERSE, purement informatif -- jamais tactile).
 local SCREENS = {
-  player1 = { mon = wall1, side = "player1" },
-  player2 = { mon = wall2, side = "player2" },
+  wall1  = { mon = wall1,  side = "player1", mode = "wall" },
+  floor1 = { mon = floor1, side = "player1", mode = "floor" },
+  wall2  = { mon = wall2,  side = "player2", mode = "wall" },
+  floor2 = { mon = floor2, side = "player2", mode = "floor" },
 }
-local SCREEN_KEYS = { "player1", "player2" }
-local NAME_TO_KEY = { [WALL_1_NAME] = "player1", [WALL_2_NAME] = "player2" }
--- (le moniteur partage n'est jamais tactile -- purement informatif)
+local SCREEN_KEYS = { "wall1", "floor1", "wall2", "floor2" }
+local NAME_TO_KEY = { [WALL_1_NAME] = "wall1", [WALL_2_NAME] = "wall2" }
+-- (les ecrans au sol ne sont jamais tactiles -- purement informatifs,
+-- pas d'entree pour eux dans NAME_TO_KEY)
 
 local SIDE_LABEL = { player1 = "Joueur 1", player2 = "Joueur 2" }
 
@@ -433,72 +444,63 @@ local function renderWall(G, mon, side)
 end
 
 -- ------------------------------------------------------------
--- Ecran PARTAGE : les 2 grilles cote a cote a l'horizontale, en TRES
--- GROS (taille "big", dediee a ce grand ecran) -- vue d'ensemble
--- non-interactive.
+-- Ecran au SOL (par joueur) : le plateau ADVERSE, en gros (taille
+-- "zoomShared", la plus grande dispo) -- vue de reference
+-- non-interactive, jamais tactile.
 -- ------------------------------------------------------------
-local function renderShared(G)
-  local w, h = shared.getSize()
-  shared.setBackgroundColor(colors.black)
-  shared.clear()
+local function renderFloor(G, mon, side)
+  local w, h = mon.getSize()
+  mon.setBackgroundColor(colors.black)
+  mon.clear()
+  local opponent = otherSide(side)
 
-  shared.setCursorPos(1, 1)
-  shared.setTextColor(colors.white)
+  mon.setCursorPos(1, 1)
+  mon.setTextColor(colors.white)
   if G.gameOver then
     if G.winner == "draw" then
-      shared.write("Match nul !")
+      mon.write("Match nul !")
     else
-      shared.setTextColor(colors.lime)
-      shared.write(SIDE_LABEL[G.winner] .. " a gagne !")
+      mon.setTextColor(colors.lime)
+      mon.write(SIDE_LABEL[G.winner] .. " a gagne !")
     end
   else
-    shared.setTextColor(colors.lime)
-    shared.write("Tour de " .. SIDE_LABEL[G.currentPlayer] .. " -- de courant: " .. tostring(G.currentRoll))
+    mon.setTextColor(colors.lightGray)
+    mon.write("Plateau de l'adversaire")
   end
-  shared.setTextColor(colors.white)
+  mon.setTextColor(colors.white)
 
-  -- essaie le format "zoomShared" (bien plus gros que le mur) ; ne
-  -- bascule en "zoom" (taille mur) que si ca ne tient vraiment pas,
-  -- et en dernier recours en "compact".
+  mon.setCursorPos(1, 2)
+  mon.write("Score : " .. scoreGrid(G.grids[opponent]))
+
+  -- essaie le format le plus zoome possible pour cet ecran ; repli
+  -- progressif si la place manque.
   local zs = GRID_TIERS.zoomShared
   local bigGridW = COLS * (zs.cellW + 1) - 1
   local bigGridH = ROWS * (zs.cellH + 1) + 1
-  local colGap = 4
   local tier
-  if 2 * bigGridW + colGap <= w and bigGridH + 2 <= h then
+  if bigGridW <= w and bigGridH + 3 <= h then
     tier = "zoomShared"
-  elseif chooseTierForWall(math.floor((w - colGap) / 2), h - 2) == "zoom" then
+  elseif chooseTierForWall(w, h) == "zoom" then
     tier = "zoom"
   else
     tier = "compact"
   end
 
-  local cellW = GRID_TIERS[tier].cellW
-  local halfW = COLS * (cellW + 1) - 1
-
-  local y = 3
-  shared.setCursorPos(1, y)
-  shared.setTextColor(colors.lightGray)
-  shared.write(SIDE_LABEL.player1 .. " (score: " .. scoreGrid(G.grids.player1) .. ")")
-  local x2 = 1 + halfW + colGap
-  shared.setCursorPos(x2, y)
-  shared.write(SIDE_LABEL.player2 .. " (score: " .. scoreGrid(G.grids.player2) .. ")")
-  shared.setTextColor(colors.white)
-
-  y = y + 1
-  drawGrid(shared, 1, y, G.grids.player1, tier, nil)
-  drawGrid(shared, x2, y, G.grids.player2, tier, nil)
+  drawGrid(mon, 1, 4, G.grids[opponent], tier, nil)
 end
 
-local lastClickZones = { player1 = {}, player2 = {} }
+local lastClickZones = { wall1 = {}, floor1 = {}, wall2 = {}, floor2 = {} }
 _G.__KB_DEBUG_ZONES = function() return lastClickZones end -- hook de test, sans effet en jeu
 
 local function redrawAll(G)
   for _, key in ipairs(SCREEN_KEYS) do
     local s = SCREENS[key]
-    lastClickZones[key] = renderWall(G, s.mon, s.side)
+    if s.mode == "wall" then
+      lastClickZones[key] = renderWall(G, s.mon, s.side)
+    else
+      renderFloor(G, s.mon, s.side)
+    end
   end
-  renderShared(G)
 end
 
 local function zoneAt(zones, x, y)
@@ -580,8 +582,6 @@ while true do
             mon.setBackgroundColor(colors.black)
             mon.clear()
           end
-          shared.setBackgroundColor(colors.black)
-          shared.clear()
           print("Knucklebones ferme.")
           return
         end

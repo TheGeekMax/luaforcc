@@ -1,0 +1,3 @@
+#all: autorequest/req
+
+#startup: main_autorequest.lua

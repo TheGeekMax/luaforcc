@@ -18,7 +18,17 @@ local mon = MONITOR_NAME and peripheral.wrap(MONITOR_NAME) or peripheral.find("m
 local speaker = SPEAKER_NAME and peripheral.wrap(SPEAKER_NAME) or peripheral.find("speaker")
 assert(mon, "Aucun moniteur trouve")
 assert(speaker, "Aucun speaker trouve")
+assert(speaker.playAudio, "Ce speaker ne supporte pas playAudio (CC:Tweaked trop ancien)")
 local monName = peripheral.getName(mon)
+
+-- stopAudio n'existe pas sur les anciennes versions de CC:Tweaked :
+-- sans lui, pause/stop/seek prennent effet une fois le tampon du speaker vide,
+-- donc on envoie de plus petits morceaux pour garder une bonne reactivite
+local HAS_STOP = type(speaker.stopAudio) == "function"
+if not HAS_STOP then CHUNK = 4 * 1024 end
+local function stopAudio()
+  if HAS_STOP then speaker.stopAudio() end
+end
 
 if not fs.exists(SOUND_DIR) then fs.makeDir(SOUND_DIR) end
 mon.setTextScale(TEXT_SCALE)
@@ -85,7 +95,7 @@ local function openTrack(i)
   local t = state.tracks[i]
   if not t then return end
   closeHandle()
-  speaker.stopAudio()
+  stopAudio()
   local h = fs.open(t.path, "rb")
   if not h then
     state.message = "Impossible d'ouvrir " .. t.name
@@ -107,7 +117,7 @@ end
 
 local function stop()
   closeHandle()
-  speaker.stopAudio()
+  stopAudio()
   state.playing = false
   state.paused = false
   state.pos = 0
@@ -123,7 +133,7 @@ local function togglePause()
   end
   state.paused = not state.paused
   if state.paused then
-    speaker.stopAudio()
+    stopAudio()
   else
     state.decoder = dfpwm.make_decoder()
     wake()
@@ -138,7 +148,7 @@ local function seek(frac)
   state.pos = newPos
   state.decoder = dfpwm.make_decoder()
   state.gen = state.gen + 1
-  speaker.stopAudio()
+  stopAudio()
   wake()
   redraw()
 end
@@ -512,7 +522,7 @@ end
 scanTracks()
 parallel.waitForAny(audioLoop, uiLoop, termLoop)
 
-speaker.stopAudio()
+stopAudio()
 closeHandle()
 mon.setBackgroundColor(colors.black)
 mon.clear()

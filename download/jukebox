@@ -1,0 +1,3 @@
+#all: jukebox
+
+#startup: jukebox.lua

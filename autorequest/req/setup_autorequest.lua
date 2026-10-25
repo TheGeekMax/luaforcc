@@ -130,7 +130,7 @@ local function buildConfig(c)
     "  jour = " .. fmtNum(c.jour) .. ",",
     "  nuit = " .. fmtNum(c.nuit) .. ",",
     "",
-    "  -- Taille des requetes : on crafte le multiple superieur du manque",
+    "  -- Taille de chaque requete : un batch a la fois, jusqu'a atteindre le min",
     "  batch_items  = " .. fmtNum(c.batch_items) .. ",   -- en items",
     "  batch_fluids = " .. fmtNum(c.batch_fluids) .. ",   -- en seaux (1 seau = 1000 mB)",
     "",
@@ -183,9 +183,9 @@ print("")
 c.nuit = askNumber("% des CPUs utilisables en mode NUIT ?", "Tu es absent : on peut tout prendre.", cur.nuit, 0, 100)
 
 header(2, T, "Taille des requetes")
-c.batch_items = askNumber("Batch pour les items ?", "Ex: 64 -> il manque 34, on en crafte 64.", cur.batch_items, 1, nil, true)
+c.batch_items = askNumber("Batch pour les items ?", "Chaque requete = 1 batch, repete jusqu'au min.", cur.batch_items, 1, nil, true)
 print("")
-c.batch_fluids = askNumber("Batch pour les fluides (en seaux) ?", "Ex: 64 -> multiples de 64 000 mB.", cur.batch_fluids, 1, nil, true)
+c.batch_fluids = askNumber("Batch pour les fluides (en seaux) ?", "Ex: 64 -> requetes de 64 000 mB.", cur.batch_fluids, 1, nil, true)
 
 header(3, T, "Echecs")
 c.timeout = askNumber("Delai avant echec (secondes) ?",

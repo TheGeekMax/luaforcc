@@ -19,7 +19,7 @@ local DEFAULT_CFG = [[
   jour = 50,
   nuit = 90,
 
-  -- Taille des requetes : on crafte le multiple superieur du manque
+  -- Taille de chaque requete : un batch a la fois, jusqu'a atteindre le min
   batch_items  = 64,   -- en items
   batch_fluids = 64,   -- en seaux (1 seau = 1000 mB)
 
@@ -169,8 +169,8 @@ end
 local function serializeItems(list)
   local out = { "{" }
   for _, it in ipairs(list) do
-    out[#out + 1] = string.format("  { type = %q, id = %q, min = %d, name = %q },",
-      it.kind, it.id, it.min, it.name or it.id)
+    out[#out + 1] = string.format("  { type = %q, id = %q, min = %d, nuit = %s, name = %q },",
+      it.kind, it.id, it.min, it.night and "true" or "false", it.name or it.id)
   end
   out[#out + 1] = "}"
   return table.concat(out, "\n") .. "\n"
@@ -202,6 +202,7 @@ local function loadItems()
         list[#list + 1] = {
           kind = kind, id = e.id, key = key, min = math.floor(tonumber(e.min)),
           name = type(e.name) == "string" and e.name or e.id,
+          night = e.nuit == true,
         }
       end
     end
@@ -447,10 +448,17 @@ local function scan()
           fail(it, "aucun CPU apres " .. math.floor(cfg.timeout) .. "s")
         end
       end
+      r.waitNight = false
       if r.skip or r.pending or crafting then
         unqueue(it.key)
       elseif s < mu then
-        enqueue(it.key)
+        if it.night and mode ~= "nuit" then
+          -- item "nuit seulement" : on attend le mode nuit
+          r.waitNight = true
+          unqueue(it.key)
+        else
+          enqueue(it.key)
+        end
       else
         unqueue(it.key)
         if r.fails > 0 then r.fails, r.retryAfter = 0, nil; dirty = true end
@@ -471,14 +479,17 @@ local function scan()
     local key = table.remove(queue, 1)
     inQueue[key] = nil
     local it, r = byKey[key], rt[key]
-    if it and r and not r.skip and not r.pending and not r.absent and not r.onCpu then
+    if it and it.night and mode ~= "nuit" then
+      if r then r.waitNight = true end -- passe en jour entre deux scans : on le sort de la file
+    elseif it and r and not r.skip and not r.pending and not r.absent and not r.onCpu then
       if r.retryAfter and t < r.retryAfter then
         enqueue(key) -- pas encore, on le remet au bout
       else
         local missing = minUnits(it) - (r.stock or 0)
         if missing > 0 then
-          local b = batchUnits(it)
-          local amount = math.min(math.ceil(missing / b) * b, 2147483647)
+          -- une requete = un seul batch ; s'il manque encore apres, l'item
+          -- repasse en fin de file au scan suivant
+          local amount = math.min(batchUnits(it), 2147483647)
           local fn = it.kind == "fluid" and "craftFluid" or "craftItem"
           local ok, err = bcall(fn, { name = it.id, count = amount })
           if ok == true then
@@ -628,9 +639,9 @@ local function drawCpu()
   end
 
   local legend = {
-    { "Utilise " .. busy, colors.red },
+    { "Util " .. busy, colors.red },
     { "  Libre " .. green, colors.lime },
-    { "  Hors ratio " .. grey, colors.lightGray },
+    { "  Hors " .. grey, colors.lightGray },
     { "  Joueur " .. po, colors.orange },
   }
   if pend > 0 then legend[#legend + 1] = { "  Calcul " .. pend, colors.lightBlue } end
@@ -652,6 +663,7 @@ local function itemState(it)
     if r.fails > 0 then return "file", "RETRY " .. r.fails .. "/" .. cfg.max_echecs, colors.orange, 3 end
     return "file", "EN FILE", colors.yellow, 5
   end
+  if r.waitNight then return "nuit", "ATT. NUIT", colors.blue, 6 end
   if r.stock == nil then return "ok", "?", colors.gray, 9 end
   return "ok", "OK", colors.lime, 9
 end
@@ -678,7 +690,7 @@ end
 local function drawSuivi()
   drawCpu()
 
-  local counts = { ok = 0, craft = 0, file = 0, err = 0 }
+  local counts = { ok = 0, craft = 0, file = 0, err = 0, nuit = 0 }
   local shown = {}
   for i, it in ipairs(tracked) do
     local code, lb, col, prio = itemState(it)
@@ -693,11 +705,12 @@ local function drawSuivi()
 
   segBar(2, 6, MW - 2, {
     { counts.ok, colors.lime }, { counts.craft, colors.lightBlue },
-    { counts.file, colors.yellow }, { counts.err, colors.red },
+    { counts.file, colors.yellow }, { counts.nuit, colors.blue }, { counts.err, colors.red },
   })
   seq(2, 7, {
     { "OK " .. counts.ok, colors.lime }, { "  Craft " .. counts.craft, colors.lightBlue },
-    { "  File " .. counts.file, colors.yellow }, { "  Erreur " .. counts.err, colors.red },
+    { "  File " .. counts.file, colors.yellow }, { "  Nuit " .. counts.nuit, colors.blue },
+    { "  Err " .. counts.err, colors.red },
     { "  Batch " .. cfg.batch_items .. "/" .. cfg.batch_fluids .. "B", colors.lightGray },
   })
   at(1, 8, string.rep("\140", MW), colors.gray, colors.black)
@@ -794,7 +807,7 @@ local function drawRecherche()
     local col, row = math.floor(i / rows), i % rows
     local x, y = 2 + col * colW, top + row
     local tr = byKey[e.key]
-    local tag = tr and (" [suivi " .. amt(tr.kind, minUnits(tr)) .. "]") or ""
+    local tag = tr and (" [suivi " .. amt(tr.kind, minUnits(tr)) .. (tr.night and " N" or "") .. "]") or ""
     local sel = ui.edit and ui.edit.key == e.key
     local bg = sel and colors.white or colors.black
     local nm = (e.kind == "fluid" and "~" or "") .. e.name
@@ -803,6 +816,7 @@ local function drawRecherche()
     zone(x, y, x + colW - 2, y, function()
       ui.edit = e
       ui.editBuf = tr and tostring(tr.min) or ""
+      ui.editNight = tr and tr.night or false
     end)
   end
   pager(MH, ui.pageRech, pages, function(p) ui.pageRech = p end)
@@ -837,8 +851,11 @@ local function drawTerm()
     tc(colors.white)
     term.write("Stock min" .. (e.kind == "fluid" and " (seaux)" or "") .. " : ")
     tc(colors.lime); term.write(ui.editBuf .. "_"); print("")
+    tc(colors.white); term.write("Nuit seulement : ")
+    if ui.editNight then tc(colors.lightBlue); print("OUI") else tc(colors.lightGray); print("NON") end
     tc(colors.lightGray)
     print("Entree = valider   0 = retirer   vide = annuler")
+    print("Tab = basculer nuit seulement")
   else
     tc(colors.white); term.write("Recherche : "); tc(colors.lime); term.write(ui.query .. "_"); print("")
     tc(colors.lightGray)
@@ -871,7 +888,8 @@ end
 local function commitEdit()
   local e = ui.edit
   local buf = ui.editBuf
-  ui.edit, ui.editBuf = nil, ""
+  local night = ui.editNight == true
+  ui.edit, ui.editBuf, ui.editNight = nil, "", false
   if buf == "" then return end
   if itemsErr then
     addLog("items.cfg invalide : corrige-le avant d'ajouter des items", colors.red)
@@ -893,11 +911,14 @@ local function commitEdit()
   end
   if tr then
     tr.min = n
+    tr.night = night
+    if night and mode ~= "nuit" then unqueue(e.key) end
     local r = rt[e.key]
     if r then r.fails, r.skip, r.retryAfter = 0, false, nil end
-    addLog("Modifie : " .. e.name .. " min " .. amt(tr.kind, minUnits(tr)), colors.white)
+    addLog("Modifie : " .. e.name .. " min " .. amt(tr.kind, minUnits(tr)) .. (night and " (nuit)" or ""),
+      colors.white)
   else
-    local it = { kind = e.kind, id = e.id, key = e.key, min = n, name = e.name }
+    local it = { kind = e.kind, id = e.id, key = e.key, min = n, name = e.name, night = night }
     local list = {}
     for _, x in ipairs(tracked) do list[#list + 1] = x end
     list[#list + 1] = it
@@ -961,6 +982,8 @@ local function interface()
         else ui.query = ui.query:sub(1, -2); ui.pageRech = 1 end
       elseif ev[2] == keys.enter or ev[2] == keys.numPadEnter then
         if ui.edit then commitEdit() end
+      elseif ev[2] == keys.tab and ui.edit then
+        ui.editNight = not ui.editNight
       else
         draw = false
       end

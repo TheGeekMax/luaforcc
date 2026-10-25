@@ -1,0 +1,3 @@
+#all: autorequest/alert
+
+#startup: alert.lua
